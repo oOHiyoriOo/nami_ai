@@ -1,3 +1,10 @@
+user_memories.json
+nicknames.json
+counters.json
+core_memory.json
+config.yml
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
