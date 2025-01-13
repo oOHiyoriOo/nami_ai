@@ -13,6 +13,17 @@ init(convert=True, autoreset=True)
 
 cfg = ConfigurationFile('config.yml')
 
+# Load the character / sys prompt file
+with open(f"./system_prompt/{cfg.data['ollama']['system_prompt']}.md") as f:
+    cfg.data['ollama']['system_prompt'] = f.read()
+
+print(cfg.data)
+import sys
+sys.exit(0)
+
+
+
+
 intents     : discord.Intents           = discord.Intents().all()
 client      : discord.Client            = discord.Client(intents=intents,member_cache_flags=discord.MemberCacheFlags.all())
 tree        : app_commands.CommandTree  = app_commands.CommandTree(client)
