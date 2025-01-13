@@ -5,6 +5,7 @@ from lib.tool_loader import load_tools
 
 from ollama import Client as Ollama
 
+
 # Create a dictionary to store user-specific memories
 lock = asyncio.Lock()  # Initialize the lock
 
