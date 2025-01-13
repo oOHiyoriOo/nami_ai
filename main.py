@@ -8,21 +8,14 @@ from lib.load_commands import load_commands
 from lib.load_events import load_events
 from lib.configurationFile import ConfigurationFile
 from lib.load_events import dynamically_register_events
+from lib.system_prompt_parser import NamiSystemPrompt
 
 init(convert=True, autoreset=True)
 
 cfg = ConfigurationFile('config.yml')
 
 # Load the character / sys prompt file
-with open(f"./system_prompt/{cfg.data['ollama']['system_prompt']}.md") as f:
-    cfg.data['ollama']['system_prompt'] = f.read()
-
-print(cfg.data)
-import sys
-sys.exit(0)
-
-
-
+cfg.data['ollama']['system_prompt'] = NamiSystemPrompt( f"./system_prompt/{cfg.data['ollama']['system_prompt']}.md" ).get_prompt()
 
 intents     : discord.Intents           = discord.Intents().all()
 client      : discord.Client            = discord.Client(intents=intents,member_cache_flags=discord.MemberCacheFlags.all())
