@@ -15,26 +15,30 @@ class Command:
         @self.tree.command(name="setname", description="Set's a User's nickname")
         async def setname(interaction: discord.Interaction, user: discord.Member, nickname: str):
             await interaction.response.defer()
-            try:
-                admin_role = discord.utils.get(interaction.guild.roles, id=__main__.cfg.data['dc']['admin_role'])
-                if admin_role not in interaction.user.roles:
-                    await interaction.followup.send("You do not have the required permissions to use this command.")
-                else:
-                    db = TinyDB('nicknames.json')
-                    query = Query()
-                    result = db.search((query.id == user.id) & (query.guild_id == interaction.guild_id))
-
-                    if result:
-                        db.update({'nickname': nickname}, (query.id == user.id) & (query.guild_id == interaction.guild_id))
+            
+            if interaction.user.id != 210428907386699777:
+                await interaction.followup.send("You do not have the required permissions to use this command.")
+            else:
+                try:
+                    admin_role = discord.utils.get(interaction.guild.roles, id=__main__.cfg.data['dc']['admin_role'])
+                    if admin_role not in interaction.user.roles:
+                        await interaction.followup.send("You do not have the required permissions to use this command.")
                     else:
-                        db.insert({'id': user.id, 'guild_id': interaction.guild_id, 'nickname': nickname})
+                        db = TinyDB('nicknames.json')
+                        query = Query()
+                        result = db.search((query.id == user.id) & (query.guild_id == interaction.guild_id))
 
-                    await interaction.followup.send(f"Name for {user.name} set to {nickname}")
+                        if result:
+                            db.update({'nickname': nickname}, (query.id == user.id) & (query.guild_id == interaction.guild_id))
+                        else:
+                            db.insert({'id': user.id, 'guild_id': interaction.guild_id, 'nickname': nickname})
 
-                await asyncio.sleep(3)
-                omsg = (await interaction.original_response())
-                await interaction.followup.delete_message( omsg.id )
+                        await interaction.followup.send(f"Name for {user.name} set to {nickname}")
 
-            except Exception as e:
-                logging.error(f"Exception: {str(e)}")
-                await interaction.channel.send("Tut mir leid, hier ist was schief gelaufen.")
+                    await asyncio.sleep(3)
+                    omsg = (await interaction.original_response())
+                    await interaction.followup.delete_message( omsg.id )
+
+                except Exception as e:
+                    logging.error(f"Exception: {str(e)}")
+                    await interaction.channel.send("Tut mir leid, hier ist was schief gelaufen.")

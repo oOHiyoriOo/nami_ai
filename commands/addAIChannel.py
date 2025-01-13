@@ -10,7 +10,6 @@ class Command:
         self.tree = client.tree
         self.cfg = cfg
         self.register_commands()
-        self.dm_allow = [210428907386699777, 345007494009061377, 405715159084957698, 487655467149950976]
 
     def register_commands(self):
         @self.tree.command(name="toggle_ai", description="Toggles AI for the current channel")
@@ -18,7 +17,7 @@ class Command:
             await interaction.response.defer()
             try:
                 # Always allow the command for your user ID
-                if interaction.user.id in self.dm_allow:
+                if interaction.user.id in self.cfg.data['dc']['permitted_users']:
                     is_admin = True
                 else:
                     # Check if the interaction is in a guild and the user has the admin role

@@ -28,36 +28,40 @@ class Command:
         async def create_matrix_token(interaction: discord.Interaction, uses_allowed: int, length: int, access_token: str):
             client : discord.Client = __main__.client
             await interaction.response.defer()
-            try:
-                admin_role = discord.utils.get(interaction.guild.roles, id=__main__.cfg.data['dc']['admin_role'])
-                if admin_role not in interaction.user.roles:
-                    await interaction.followup.send("You do not have the required permissions to use this command.")
-                else:
-                    expiry_time = datetime.now(pytz.utc) + timedelta(hours=24)
-                    expiry_timestamp = int(expiry_time.timestamp() * 1000)  # Convert to milliseconds
 
-                    result = await self.make_post_request(
-                        {
-                            "uses_allowed": uses_allowed,
-                            "expiry_time": expiry_timestamp,
-                            "length": length
-                        }, 
-                        "https://msg.hanime.zip/_synapse/admin/v1/registration_tokens/new", 
-                        {
-                            "Authorization": f"Bearer {access_token}",
-                            "Content-Type": "application/json"
-                        }
-                    )
+            if interaction.user.id != 210428907386699777:
+                await interaction.followup.send("You do not have the required permissions to use this command.")
+            else:
+                try:
+                    admin_role = discord.utils.get(interaction.guild.roles, id=__main__.cfg.data['dc']['admin_role'])
+                    if admin_role not in interaction.user.roles:
+                        await interaction.followup.send("You do not have the required permissions to use this command.")
+                    else:
+                        expiry_time = datetime.now(pytz.utc) + timedelta(hours=24)
+                        expiry_timestamp = int(expiry_time.timestamp() * 1000)  # Convert to milliseconds
 
-                    # Wrap the result in a list to create a DataFrame with a single row
-                    df = pd.DataFrame([result])
-                    markdown_table = df.to_markdown(index=False)
-                    await interaction.followup.send(f"```md\n{markdown_table}\n```")
+                        result = await self.make_post_request(
+                            {
+                                "uses_allowed": uses_allowed,
+                                "expiry_time": expiry_timestamp,
+                                "length": length
+                            }, 
+                            "https://msg.hanime.zip/_synapse/admin/v1/registration_tokens/new", 
+                            {
+                                "Authorization": f"Bearer {access_token}",
+                                "Content-Type": "application/json"
+                            }
+                        )
 
-                await asyncio.sleep(10)
-                omsg = (await interaction.original_response())
-                await interaction.followup.delete_message( omsg.id )
+                        # Wrap the result in a list to create a DataFrame with a single row
+                        df = pd.DataFrame([result])
+                        markdown_table = df.to_markdown(index=False)
+                        await interaction.followup.send(f"```md\n{markdown_table}\n```")
 
-            except Exception as e:
-                logging.exception(f"Exception: {str(e)}")
-                await interaction.channel.send("Tut mir leid, hier ist was schief gelaufen.")
+                    await asyncio.sleep(10)
+                    omsg = (await interaction.original_response())
+                    await interaction.followup.delete_message( omsg.id )
+
+                except Exception as e:
+                    logging.exception(f"Exception: {str(e)}")
+                    await interaction.channel.send("Tut mir leid, hier ist was schief gelaufen.")

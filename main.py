@@ -32,10 +32,10 @@ logging.basicConfig(
 
 @client.event
 async def on_ready():
-    if __main__.cfg.data['dc']['sync_guild'] != -1:
+    if __main__.cfg.data['dc']['sync_guild'] == -1:
         await client.tree.sync() 
     else:
-        client.tree.sync_guild(guild=discord.Object(id=__main__.cfg.data['dc']['sync_guild']))
+        await client.tree.sync(guild=discord.Object(id=__main__.cfg.data['dc']['sync_guild']))
 
 def remove_pycache_folders(path='.'):
     for root, dirs, files in os.walk(path):
@@ -47,7 +47,7 @@ def remove_pycache_folders(path='.'):
 async def main():
     remove_pycache_folders()
     
-    await load_events(client, None)  # Load events and handlers
+    await load_events(client, cfg)  # Load events and handlers
     dynamically_register_events(client)  # Register handlers dynamically
 
     await load_tasks(client, cfg)

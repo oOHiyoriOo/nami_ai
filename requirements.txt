@@ -10,3 +10,4 @@ pydantic
 ollama
 paramiko
 googlesearch-python
+aiofiles>=24.1.0

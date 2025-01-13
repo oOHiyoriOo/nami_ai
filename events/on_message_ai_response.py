@@ -75,13 +75,39 @@ def extract_tool_request(response):
 
     return response
 
-async def ai_chat_handler(msg, client, cfg):
-    model_name = "qwen2.5:14b"
-    if msg.author == client.user or msg.author.bot or msg.channel.id not in __main__.cfg.data['ai_channel'] and "<@520307592212381699>" not in msg.content:
-        return
+async def process_ai_response(response, reply_message, history):
+    if len(response['message']['content']) == 0:
+        logging.info(response)
+        await reply_message.edit(content="I'm sorry, I don't have a response for that.")
+    elif len(response['message']['content']) < 1980:
+        await reply_message.edit(content=response['message']['content'])
+    else:
+        logging.info("Response too long, splitting into chunks.")
+        chunks = [response['message']['content'][i:i+1980] for i in range(0, len(response['message']['content']), 1980)]
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                await reply_message.edit(content=chunk)
+            else:
+                await reply_message.reply("... " + chunk)
+    
+    history.append({"role":"assistant", "content": response['message']['content']})
+    return history
 
-    if "<@520307592212381699>" in msg.content:
-        msg.content = msg.content.replace("<@520307592212381699>","")
+async def ai_chat_handler(msg, client, cfg):
+    model_name = cfg.data['ollama']['model']
+
+    if f"<@{client.user.id}>" not in msg.content:
+        if msg.author == client.user or msg.author.bot:
+            return
+
+        if msg.channel.id not in __main__.cfg.data['ai_channel']:
+            return
+
+    if f"<@{client.user.id}>" in msg.content:
+        if msg.author.id not in cfg.data['dc']['permitted_users']:
+            return
+        
+        msg.content = msg.content.replace(f"<@{client.user.id}>","")
 
     user_id = str(msg.author.id)
     user_input = msg.content
@@ -89,56 +115,25 @@ async def ai_chat_handler(msg, client, cfg):
 
     try:
         reply_message = await msg.reply("I'm thinking...")
-
         external_tools = await load_tools(client)
-        ollama : Ollama = get_ollama_instance()  # Create an instance of the Ollama model
+        ollama = get_ollama_instance()
 
-        history.append({
-            "role": "user", 
-            "content": user_input
-        })
-
+        history.append({"role": "user", "content": user_input})
         messages = await prepare_messages(external_tools, client, history, msg.author)
         
-        # Remove the 'func' field from each tool before making the request
         sanitized_tools = [{k: v for k, v in tool.items() if k != 'func'} for tool in external_tools]
         response = await asyncio.to_thread(ollama.chat, model=model_name, messages=messages, tools=sanitized_tools)
         response = extract_tool_request(response)
 
         while 'tool_calls' in response['message'] and len(response['message']['tool_calls']) > 0:
-            logging.info(f"Response: {response}")
-            logging.info("Handling tool message.")
             history = await handle_tool_message(history, response['message']['tool_calls'], external_tools, client, msg)
-            
             messages = await prepare_messages(external_tools, client, history, msg.author)
             sanitized_tools = [{k: v for k, v in tool.items() if k != 'func'} for tool in external_tools]
-
             response = await asyncio.to_thread(ollama.chat, model=model_name, messages=messages, tools=sanitized_tools)
             response = extract_tool_request(response)
-            logging.info(messages)
 
-        # Add the AI's response to history
-        history.append({"role":"assistant", "content": response['message']['content']})
-
-        # Save memories after generating a response
+        history = await process_ai_response(response, reply_message, history)
         await save_memories(user_id, history=history)
-
-        # Send the response to the Discord channel
-        if len(response['message']['content']) == 0:
-            logging.info(response)
-            await reply_message.edit(content="I'm sorry, I don't have a response for that.")
-
-        elif len(response['message']['content']) < 1980:
-            await reply_message.edit(content=response['message']['content'])
-
-        else:
-            logging.info("Response too long, splitting into chunks.")
-            chunks = [response['message']['content'][i:i+1980] for i in range(0, len(response['message']['content']), 1980)]
-            for i, chunk in enumerate(chunks):
-                if i == 0:
-                    await reply_message.edit(content=chunk)
-                else:
-                    await reply_message.reply("... " + chunk)
 
     except Exception as e:
         logging.error(f"Error processing AI response: {e}")
@@ -170,14 +165,13 @@ async def prepare_messages(external_tools, client, history, author):
         except:
             pass
 
-
     messages = [{"role": "system", "content": __main__.cfg.data['ollama']['system_prompt']}]
-    if not "None" in tool_result['content']:
+    if tool_result and "None" not in tool_result['content']:
         logging.debug("Added User Info: " + tool_result['content'])
         logging.debug("="*50)
         messages.append(tool_result)
 
-    if not "None" in memory_result['content']:
+    if memory_result and "None" not in memory_result['content']:
         logging.debug("Added User Memories: " + memory_result['content'])
         logging.debug("="*50)
         messages.append(memory_result)
@@ -225,6 +219,8 @@ async def handle_tool_message(history, tool_calls, external_tools, client, msg):
                 stack_trace = traceback.format_exc()
                 logging.error(f"Error executing tool {tool_name}: {e}")
                 logging.error(f"Stacktrace: {stack_trace}")
+                logging.info(f"Tool args: {tool_args}")
+
                 history.append({
                     "role": "tool",
                     "name": tool_name,
