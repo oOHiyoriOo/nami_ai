@@ -14,8 +14,7 @@ init(convert=True, autoreset=True)
 
 cfg = ConfigurationFile('config.yml')
 
-# Load the character / sys prompt file
-cfg.data['ollama']['system_prompt'] = NamiSystemPrompt( f"./system_prompt/{cfg.data['ollama']['system_prompt']}.md" ).get_prompt()
+_SYS_PROMPT = NamiSystemPrompt( f"./system_prompt/{cfg.data['ollama']['system_prompt']}.md" ).get_prompt()
 
 intents     : discord.Intents           = discord.Intents().all()
 client      : discord.Client            = discord.Client(intents=intents,member_cache_flags=discord.MemberCacheFlags.all())

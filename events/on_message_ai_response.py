@@ -170,14 +170,13 @@ async def prepare_messages(external_tools, client, history, author):
         except:
             pass
 
-
-    messages = [{"role": "system", "content": __main__.cfg.data['ollama']['system_prompt']}]
-    if not "None" in tool_result['content']:
+    messages = [{"role": "system", "content": __main__._SYS_PROMPT.get_prompt() }]
+    if "None" not in tool_result['content']:
         logging.debug("Added User Info: " + tool_result['content'])
         logging.debug("="*50)
         messages.append(tool_result)
 
-    if not "None" in memory_result['content']:
+    if "None" not in memory_result['content']:
         logging.debug("Added User Memories: " + memory_result['content'])
         logging.debug("="*50)
         messages.append(memory_result)
@@ -201,17 +200,6 @@ async def handle_tool_message(history, tool_calls, external_tools, client, msg):
 
                 if asyncio.iscoroutine(tool_result):
                     tool_result = await tool_result
-
-                # if "images" in tool_result:
-                #     embeds = []
-                #     for image_path in tool_result["images"]:
-                #         embed = Embed().set_image(url=f"attachment://{os.path.basename(image_path)}")
-                #         embeds.append(embed)
-                    
-                #     files = [discord.File(image_path) for image_path in tool_result["images"]]
-                #     await msg.channel.send(files=files, embeds=embeds)
-
-                #     tool_result = tool_result["message"]
 
                 # Add tool result directly to history as a system message
                 history.append({
