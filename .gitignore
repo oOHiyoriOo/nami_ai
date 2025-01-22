@@ -3,7 +3,7 @@ nicknames.json
 counters.json
 core_memory.json
 config.yml
-
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
