@@ -158,8 +158,8 @@ async def prepare_messages(external_tools, client, history, author):
                 "role": "system",
                 "content": "Your Chat Partner: " + str( await query_discord_user_tool['func'](client, str(author.id), str(author.id)) )
             }
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Error executing query_discord_user tool: {e}")
     
     if core_memory_tool:
         try:
@@ -167,10 +167,10 @@ async def prepare_messages(external_tools, client, history, author):
                 "role": "system",
                 "content": "Your Memories:\na" + str( await core_memory_tool['func'](client, str(author.id), memory=None) )
             }
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Error executing core_memory tool: {e}")
 
-    messages = [{"role": "system", "content": __main__._SYS_PROMPT.get_prompt() }]
+    messages = [{"role": "system", "content": await __main__._SYS_PROMPT.get_prompt() }]
     if "None" not in tool_result['content']:
         logging.debug("Added User Info: " + tool_result['content'])
         logging.debug("="*50)
