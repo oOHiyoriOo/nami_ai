@@ -11,3 +11,5 @@ ollama
 paramiko
 googlesearch-python
 aiofiles>=24.1.0
+aiosqlite>=0.20.0
+whisper>=1.1.10

@@ -1,0 +1,71 @@
+import aiosqlite
+import json
+from lib.load_events import register_event
+
+# JSON to define the table schema
+model = {
+    "table_name": "messages",
+    "fields": {
+        "id": "INTEGER PRIMARY KEY",
+        "author": "INTEGER",
+        "content": "TEXT",
+        "timestamp": "INTEGER",
+        "channel": "INTEGER",
+        "guild": "INTEGER",
+        "parent": "INTEGER NULL",
+    }
+}
+
+# Persistent connection object
+db_connection : aiosqlite.Connection = None
+
+# Initialize SQLite database and create table if it doesn't exist
+async def init_db():
+    global db_connection
+    if db_connection and db_connection.is_alive():
+        return
+
+    db_connection = await aiosqlite.connect("messages.db")
+    
+    # Build the CREATE TABLE SQL dynamically from the JSON schema
+    fields = ", ".join([f"{key} {value}" for key, value in model["fields"].items()])
+    create_table_sql = f"CREATE TABLE IF NOT EXISTS {model['table_name']} ({fields})"
+    await db_connection.execute(create_table_sql)
+    await db_connection.commit()
+
+# Save message to SQLite
+async def message_saver(msg):
+    if msg.content == "":
+        return
+    
+    global db_connection
+    data = {
+        "id": msg.id,
+        "author": msg.author.id,
+        "content": msg.content,
+        "timestamp": msg.created_at.timestamp(),
+        "channel": msg.channel.id,
+        "guild": msg.guild.id if msg.guild else None,
+        "parent": msg.reference.message_id if msg.reference else None
+    }
+
+    # Prepare INSERT statement
+    fields = ", ".join(data.keys())
+    placeholders = ", ".join(["?"] * len(data))
+    insert_sql = f"INSERT OR REPLACE INTO {model['table_name']} ({fields}) VALUES ({placeholders})"
+    await db_connection.execute(insert_sql, tuple(data.values()))
+    await db_connection.commit()
+
+# Close database connection on shutdown
+async def close_db():
+    global db_connection
+    if db_connection:
+        await db_connection.close()
+
+# Setup function
+async def setup(client, cfg):
+    # Initialize the database and table
+    await init_db()
+    
+    # Register the event
+    register_event("on_message", message_saver)
