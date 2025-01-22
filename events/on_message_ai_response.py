@@ -154,8 +154,8 @@ async def prepare_messages(external_tools, client, history, author):
                 "role": "system",
                 "content": "Your Chat Partner: " + str( await query_discord_user_tool['func'](client, str(author.id), str(author.id)) )
             }
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Error executing query_discord_user tool: {e}")
     
     if core_memory_tool:
         try:
@@ -163,16 +163,16 @@ async def prepare_messages(external_tools, client, history, author):
                 "role": "system",
                 "content": "Your Memories:\na" + str( await core_memory_tool['func'](client, str(author.id), memory=None) )
             }
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Error executing core_memory tool: {e}")
 
-    messages = [{"role": "system", "content": __main__.cfg.data['ollama']['system_prompt']}]
-    if tool_result and "None" not in tool_result['content']:
+    messages = [{"role": "system", "content": await __main__._SYS_PROMPT.get_prompt() }]
+    if "None" not in tool_result['content']:
         logging.debug("Added User Info: " + tool_result['content'])
         logging.debug("="*50)
         messages.append(tool_result)
 
-    if memory_result and "None" not in memory_result['content']:
+    if "None" not in memory_result['content']:
         logging.debug("Added User Memories: " + memory_result['content'])
         logging.debug("="*50)
         messages.append(memory_result)
@@ -196,17 +196,6 @@ async def handle_tool_message(history, tool_calls, external_tools, client, msg):
 
                 if asyncio.iscoroutine(tool_result):
                     tool_result = await tool_result
-
-                # if "images" in tool_result:
-                #     embeds = []
-                #     for image_path in tool_result["images"]:
-                #         embed = Embed().set_image(url=f"attachment://{os.path.basename(image_path)}")
-                #         embeds.append(embed)
-                    
-                #     files = [discord.File(image_path) for image_path in tool_result["images"]]
-                #     await msg.channel.send(files=files, embeds=embeds)
-
-                #     tool_result = tool_result["message"]
 
                 # Add tool result directly to history as a system message
                 history.append({
