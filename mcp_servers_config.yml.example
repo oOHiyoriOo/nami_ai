@@ -1,0 +1,32 @@
+# mcp_servers_config.yml
+
+mcp_servers:
+  fact_checker_service: # This is a unique key for your internal reference
+    # 'tool_name' is what the LLM will use to identify and call the function.
+    # It should be a valid Python function name.
+    tool_name: "verify_claim_with_fact_checker"
+
+    # 'url' is the endpoint of the MCP server for this specific service.
+    url: "http://your-mcp-fact-checker.example.com/api/v1/verify"
+
+    # 'description_for_llm' is crucial. It tells Nami's LLM what this tool does
+    # and when to use it. Be descriptive and clear.
+    description_for_llm: "Verifies the factual accuracy of a specific claim or statement by consulting a specialized fact-checking MCP service. Use this when you need to confirm if a piece of information is true or false."
+
+    # 'parameters_schema' defines any *additional* parameters this specific tool
+    # (and thus the underlying MCP server) requires, beyond the default 'query_topic'.
+    # 'query_topic' will be implicitly added by the mcp_tool_builder as the primary input.
+    # In this example, the fact-checker might also want the claim itself as a distinct parameter.
+    # However, to keep it super simple for this first step, we can assume 'query_topic'
+    # will hold the "claim_to_verify". If the server API is more structured,
+    # we'd define specific parameters here.
+    # For now, let's make it expect the claim within 'query_topic'.
+    parameters_schema:
+      source_language: # An example of an optional, server-specific parameter
+        type: "string"
+        description: "Optional. The language code (e.g., 'en', 'de') of the claim, if known. Helps the fact-checker process the claim more accurately."
+        enum: ["en", "de", "es", "fr"] # Example supported languages
+
+    # 'required_parameters' lists any *additional* parameters from 'parameters_schema'
+    # that are mandatory for this tool. 'query_topic' is always required by default.
+    required_parameters: [] # In this simple example, 'source_language' is optional.

@@ -1,0 +1,40 @@
+ai_channel:
+- 1305130290384998441
+bot:
+  brave_search_token: FOR_WEB_SEARCH
+  log_level: 20 # 10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR, 50=CRITICAL
+
+# Settings to use ComfyUI for image generation.
+comfyui: 
+  negative_node: '7'
+  output: image_output
+  positive_node: '6'
+  sampler_node: '3'
+  server: 192.168.188.178:8188
+  workflow: lunarcherry.json
+
+dc:
+  admin_role: 1165032494563864668
+  permitted_users:
+  - 210428907386699777
+  sync_guild: -1
+  token: DISCORD_TOKEN_HERE
+
+# Used by the memory module to store data.
+neo4j:
+  pass: NEO4J_PASSWORD_HERE
+  uri: neo4j://192.168.188.178:7687
+  user: neo4j
+
+# used to upload generated images to Nextcloud.
+nextcloud:
+  pass: NEXTCLOUD_PASSWORD_HERE
+  url: http://nextcloud.example.com
+  user: admin
+
+# Ollama settings for LLM interactions.
+ollama:
+  max_tool_calls: 3
+  model: deepseek-r1:70b-llama-distill-q4_K_M-tools
+  system_prompt: nami
+  url: http://192.168.188.178:11434
