@@ -6,7 +6,17 @@ class Location:
         self.planeOfExistence = planeOfExistence
 
     def to_dict(self):
-        return self.__dict__
+        return {
+            k: v for k, v in self.__dict__.items()
+            if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+        }
+
+    def __iter__(self):
+        yield from self.to_dict().items()
+
+    def __json__(self):
+        import json
+        return json.dumps(self.to_dict(), default=str)
 
     def to_cypher(self, alias="loc"):
         props = []
@@ -18,3 +28,8 @@ class Location:
 
     def __str__(self):
         return self.to_cypher()
+
+    @staticmethod
+    def list_to_dicts(locations):
+        """Convert a list of Location objects to a list of dicts for JSON serialization."""
+        return [l.to_dict() if hasattr(l, "to_dict") else l for l in locations]

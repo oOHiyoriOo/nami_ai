@@ -8,8 +8,7 @@ from lib.neo4j_lib.procedural_unit import ProceduralUnit
 
 import logging
 import numpy as np
-import time # Für Timestamps
-import json
+import torch
 
 # Entfernt: faiss, pickle, os, json (json wird eher im vector_helper gebraucht)
 
@@ -26,7 +25,7 @@ class MemoryDb:
             model_name (str): Name of the SentenceTransformers model for embeddings.
         """
         # Sentence Transformer Model laden (wird weiterhin für Embeddings gebraucht)
-        self.model = SentenceTransformer(model_name, device='cpu')
+        self.model = SentenceTransformer(model_name, device='cuda' if torch.cuda.is_available() else 'cpu')
         self.dimension = self.model.get_sentence_embedding_dimension()
         if not self.dimension:
             raise ValueError(f"Could not determine embedding dimension for model '{model_name}'.")
@@ -114,8 +113,41 @@ class MemoryDb:
             MERGE (u)-[:IST_AUTOR_VON]->(m)
             """
             session.run(query)
-            logging.debug(f"Added {memory_type} for user {user_id}: {memory_args}")
 
+            # Link concepts as separate nodes using Concept class
+            concepts = memory_args.get('concepts', [])
+            if concepts:
+                from lib.neo4j_lib.concept import Concept
+                mem_id = getattr(mem_obj, 'id', None)
+                for concept_data in concepts:
+                    # concept_data can be a string (name) or dict
+                    if isinstance(concept_data, str):
+                        concept_obj = Concept(id=None, name=concept_data)
+                    elif isinstance(concept_data, dict):
+                        concept_obj = Concept(**concept_data)
+                    else:
+                        continue
+                    concept_cypher = concept_obj.to_cypher("c")
+                    # Merge concept node
+                    session.run(f"MERGE {concept_cypher}")
+                    # Link memory to concept (avoid cartesian product)
+                    if mem_id:
+                        cypher_link = f"""
+                        MATCH (m:{memory_type} {{id: $mem_id}})
+                        WITH m
+                        MATCH (c:CONCEPT {{name: $concept_name}})
+                        MERGE (m)-[:BEZIEHT_SICH_AUF_KONZEPT]->(c)
+                        """
+                        session.run(cypher_link, {"mem_id": mem_id, "concept_name": concept_obj.name})
+                    else:
+                        cypher_link = f"""
+                        MATCH (m:{memory_type})
+                        WITH m
+                        MATCH (c:CONCEPT {{name: $concept_name}})
+                        MERGE (m)-[:BEZIEHT_SICH_AUF_KONZEPT]->(c)
+                        """
+                        session.run(cypher_link, {"concept_name": concept_obj.name})
+                    logging.info(f"Linked memory to concept: {concept_obj.name}")
 
     # Search returns memory objects and similarity scores
     def search(self, query: str, user_id: str | None = None, top_k: int = 5) -> list:
@@ -148,7 +180,8 @@ class MemoryDb:
                 for record in results:
                     node = record["node"]
                     score = record["score"]
-                    label = node.labels[0] if node.labels else None
+                    labels = list(node.labels) if hasattr(node, 'labels') else []
+                    label = labels[0] if labels else None
                     if label == node_label:
                         mem_obj = cls(**dict(node))
                     else:
@@ -165,6 +198,7 @@ class MemoryDb:
         driver = self.get_driver()
         with driver.session() as session:
             query_embedding = self.model.encode(query).tolist()
+            logging.info(f"search_with_context: query='{query}'")
             output = []
             memory_ids = []
             # Step 1: Vector search for all types
@@ -185,27 +219,38 @@ class MemoryDb:
                 for record in vector_results:
                     node = record["node"]
                     score = record["score"]
-                    label = node.labels[0] if node.labels else None
+                    labels = list(node.labels) if hasattr(node, 'labels') else []
+                    label = labels[0] if labels else None
+                    
                     if label == node_label:
                         mem_obj = cls(**dict(node))
                     else:
                         mem_obj = dict(node)
+
                     output.append({"memory": mem_obj, "score": score, "type": "vector"})
                     memory_ids.append(record["memoryId"])
+
+            logging.info(f"search_with_context: collected memory_ids={memory_ids}")
 
             # Step 2: Context expansion via edges
             if memory_ids:
                 context_query = """
-                MATCH (m)-[r]->(related:Memory)
+                MATCH (m)-[r]->(related)
                 WHERE elementId(m) IN $memoryIds AND NOT elementId(related) IN $memoryIds
+                AND (related:EpisodicMemory OR related:KnowledgeUnit OR related:ProceduralUnit)
                 RETURN DISTINCT elementId(related) AS memoryId, related
                 LIMIT $context_k
                 """
+
                 context_params = {"memoryIds": memory_ids, "context_k": context_k}
                 context_results = list(session.run(context_query, context_params))
+                logging.info(f"search_with_context: context_results: {context_results}")
+
                 for record in context_results:
                     node = record["related"]
-                    label = node.labels[0] if node.labels else None
+                    labels = list(node.labels) if hasattr(node, 'labels') else []
+                    label = labels[0] if labels else None
+                    logging.info(f"search_with_context: context node_label={label}, node={node}")
                     if label == "EpisodicMemory":
                         mem_obj = EpisodicMemory(**dict(node))
                     elif label == "KnowledgeUnit":
@@ -215,6 +260,9 @@ class MemoryDb:
                     else:
                         mem_obj = dict(node)
                     output.append({"memory": mem_obj, "score": 0.0, "type": "context"})
+            else:
+                logging.info("search_with_context: No memory_ids found from vector search.")
+
             return output
 
     def setup_indices(self):

@@ -28,7 +28,7 @@ class VectorHelper:
         logging.info(f"Injecting Known Memory: \n{known_memory}")
         ai_response = await asyncio.to_thread(
             self.ollama_helper.get_ollama_instance().chat, 
-            model = g_data.get('cfg').data['ollama']['model'],
+            model = g_data.get('cfg').data['ollama']['memoryModel'],
             messages = [{
                 "role": "system",
                 "content": summary_prompt
