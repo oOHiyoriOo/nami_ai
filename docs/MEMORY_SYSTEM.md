@@ -187,7 +187,7 @@ Available models (via sentence-transformers):
 
 ### Memory Parameters
 
-In code (`api_server_ollama.py`):
+In code (`api_server.py`):
 
 ```python
 # Number of memories to retrieve

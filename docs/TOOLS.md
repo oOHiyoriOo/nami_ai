@@ -622,7 +622,7 @@ mv OllamaTools/my_tool.py OllamaTools/my_tool.py.disabled
 
 ### Globally
 
-In `api_server_ollama.py`:
+In `api_server.py`:
 ```python
 # Comment out tools loading
 # tools = request.tools

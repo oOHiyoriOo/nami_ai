@@ -242,7 +242,7 @@ providers:
 ### 4. Test
 
 ```bash
-python api_server_ollama.py
+python api_server.py
 ```
 
 That's it! Your custom provider is now integrated.
@@ -290,7 +290,7 @@ ai_provider: openai  # Change from ollama to openai
 
 2. Restart server:
 ```bash
-python api_server_ollama.py
+python api_server.py
 ```
 
 ### Programmatically

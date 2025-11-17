@@ -94,7 +94,7 @@ bot:
 ### 6. Start the Server
 
 ```bash
-python api_server_ollama.py
+python api_server.py
 ```
 
 You should see:
@@ -200,7 +200,7 @@ ollama run llama2
 
 ```bash
 # Start server
-python api_server_ollama.py
+python api_server.py
 
 # Check health
 curl http://localhost:11434/health
@@ -215,7 +215,7 @@ tail -f logs/*.log
 rm logs/*.log
 
 # Restart with different config
-python api_server_ollama.py --config my_config.yml
+python api_server.py --config my_config.yml
 ```
 
 ## Next Steps

@@ -25,7 +25,7 @@ cp config.yml.example config.yml
 nano config.yml  # Edit with your settings
 
 # 3. Run
-python api_server_ollama.py
+python api_server.py
 ```
 
 **Use with any Ollama client:**
@@ -210,7 +210,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ```
 nami_ai/
-├── api_server_ollama.py       # Main API server (Ollama-compatible)
+├── api_server.py       # Main API server (Ollama-compatible)
 ├── lib/
 │   ├── ai_providers/          # AI provider implementations
 │   │   ├── base_provider.py   # Abstract base class
