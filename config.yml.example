@@ -1,8 +1,16 @@
-ai_channel:
-- 1305130290384998441
+# API Server settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+
+# Bot settings
 bot:
   brave_search_token: FOR_WEB_SEARCH
-  log_level: 20 # 10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR, 50=CRITICAL
+  log_level: INFO # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Legacy Discord bot settings (only needed if running main_discord_bot.py)
+ai_channel:
+- 1305130290384998441
 
 # Settings to use ComfyUI for image generation.
 comfyui: 
@@ -23,8 +31,12 @@ dc:
 # Used by the memory module to store data.
 neo4j:
   pass: NEO4J_PASSWORD_HERE
-  uri: neo4j://192.168.188.178:7687
+  uri: bolt://192.168.188.178:7687
   user: neo4j
+
+# Memory database embedding model
+memory_db:
+  model: all-MiniLM-L6-v2
 
 # used to upload generated images to Nextcloud.
 nextcloud:

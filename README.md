@@ -1,16 +1,31 @@
-# Nami AI - Private AI Assistant
+# Nami AI - Personality Proxy API
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.x-blue.svg)](https://www.python.org/)
+[![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 
-Nami AI is a private, locally-run AI assistant designed for to be less AI and more helpfull. 
-It leverages modern AI techniques to provide a good user Experience 
-and deliver some information on certain "AI-Experiments".
+Nami AI is a personality proxy system that exposes AI personalities with Neo4j-backed memory through an OpenAPI interface. This allows you to use consistent AI personalities and memories with any AI backend.
+
+**NEW**: This project has been refactored from a Discord bot to a personality proxy API. The Discord bot code is preserved in the git history.
 
 ## Features
-*   **Privacy-Focused:** Runs locally, ensuring your data stays on your machine.
-*   **Extensible:** Designed with modularity in mind.
-*   **Less AI** Instructed to be more Helpfull then "ai"
+
+*   **OpenAPI Interface:** RESTful API for easy integration with any AI system
+*   **Personality Management:** System prompts that define AI character and behavior
+*   **Memory System:** Neo4j graph database for long-term memory (episodic, knowledge, procedural)
+*   **Conversation History:** SQLite-based conversation tracking
+*   **Tool Integration:** Built-in tools for web search, memory queries, and more
+*   **Privacy-Focused:** Runs locally, ensuring your data stays on your machine
+*   **Extensible:** Designed with modularity in mind
+
+## Architecture
+
+```
+Client (Any AI) → OpenAPI Interface → Personality Proxy
+                                     ├── Neo4j (Memory DB)
+                                     ├── Ollama (LLM)
+                                     ├── SQLite (History)
+                                     └── Tools System
+```
 
 ## Installation
 
@@ -34,61 +49,129 @@ and deliver some information on certain "AI-Experiments".
 
 ## Configuration
 
-Nami AI uses a configuration file `config.yml` located in the project root to manage settings. Key settings include:
+Edit `config.yml` to configure the personality proxy:
 
-*   `ai_channel`: A list of Discord channel IDs where the AI is active.
-    *   *Example:* `ai_channel: [1305130290384998441, 1355322226492182720]`
-*   `bot`: Settings related to the bot's operation.
-    *   `log_level`: Sets the logging level (e.g., 20 for INFO).
-*   `dc`: Discord-specific settings.
-    *   `admin_role`: ID of the Discord role considered admin for the bot.
-    *   `permitted_users`: List of user IDs allowed special permissions (if any).
-    *   `sync_guild`: Guild ID for syncing application commands (-1 for global).
-    *   `token`: Your Discord bot token (Keep this secret!).
-*   `ollama`: Configuration for the Ollama LLM service.
-    *   `model`: The specific Ollama model tag to use (e.g., `qwen2.5:32b-instruct`).
-    *   `system_prompt`: The name of the system prompt file (without extension) located in `system_prompt/` (e.g., `nami`).
-    *   `url`: The base URL for the Ollama API endpoint.
-    *   `max_tool_calls`: Maximum number of tool calls allowed per turn.
-*   `neo4j`: Connection details for the Neo4j graph database used for memory.
-    *   `uri`: The connection URI for the Neo4j instance.
-    *   `user`: Username for Neo4j authentication.
-    *   `pass`: Password for Neo4j authentication (Keep this secret!).
+```yaml
+api:
+  host: "0.0.0.0"
+  port: 8000
 
-*[The `config.yml` file should be placed in the root directory of the project.]*
+neo4j:
+  uri: "bolt://localhost:7687"
+  user: "neo4j"
+  pass: "your_password"
 
-## Key Functions / Modules
+ollama:
+  url: "http://localhost:11434"
+  model: "qwen2.5:32b-instruct"
+  system_prompt: "nami"  # Name of the file in system_prompt/ directory
+  max_tool_calls: 10
 
-*[This section outlines the core components of the Nami AI.]*
+memory_db:
+  model: "all-MiniLM-L6-v2"  # Embedding model
 
-*   **`main.py`:** The main entry point for the application. Initializes the Discord client, loads configuration, sets up databases (Vector DB, Memory DB), loads commands, events, and tasks, and starts the bot.
-*   **`config.yml`:** Central configuration file as described above.
-*   **`lib/`:** Contains core library code.
-    *   `configurationFile.py`: Handles loading and accessing `config.yml`.
-    *   `memory_db.py`: Manages interaction with the Neo4j graph database for structured memory.
-    *   `vektor_database.py` (Likely typo, should be `vector_database.py`): Manages the FAISS vector store for semantic memory search.
-    *   `system_prompt_parser.py`: Loads and processes the selected system prompt file.
-    *   `load_commands.py`, `load_events.py`, `load_tasks.py`: Dynamically load respective components.
-    *   `vector_helper.py`: Contains logic for extracting information from messages for memory.
-    *   `semantic_search`: Used for searching semantic memory, leveraging FAISS and message embeddings. This enables the bot to retrieve contextually relevant information from previous interactions or stored data, improving its ability to answer questions and provide context-aware responses.
-*   **`system_prompt/`:** Directory containing Markdown files that define different AI personas (e.g., `nami.md`). The `ollama.system_prompt` setting in `config.yml` selects which persona to use.
-*   **`OllamaTools/`:** Directory containing definitions for tools the AI can use (e.g., `search_web`, `search_memory`, `core_memory`). These are presented to the LLM for function calling.
+bot:
+  log_level: "INFO"
+```
+
+Key settings:
+*   `api`: API server configuration (host, port)
+*   `neo4j`: Connection details for the Neo4j graph database used for memory
+*   `ollama`: Configuration for the Ollama LLM service
+*   `memory_db`: Embedding model configuration
+*   `bot.log_level`: Sets the logging level (e.g., INFO, DEBUG)
+
+## Project Structure
+
+```
+nami_ai/
+├── api/
+│   ├── models.py              # Pydantic models for API
+│   └── conversation_service.py # Core chat logic
+├── api_server.py              # FastAPI application (main entry point)
+├── lib/
+│   ├── configurationFile.py   # Config loading
+│   ├── memory_db.py           # Neo4j memory interface
+│   ├── sqlite_helper.py       # SQLite history
+│   ├── ollama_helper.py       # Ollama LLM integration
+│   ├── vector_helper.py       # Vector/embedding utilities
+│   ├── system_prompt_parser.py # System prompt loader
+│   └── ...
+├── system_prompt/             # Personality definitions (Markdown files)
+│   ├── nami.md
+│   └── ranni.md
+├── OllamaTools/              # Tool implementations
+├── main_discord_bot.py       # Legacy Discord bot (preserved)
+├── config.yml                # Configuration
+├── requirements.txt          # Python dependencies
+└── README.md                 # This file
+```
+
+Key components:
+*   **`api_server.py`:** The main entry point for the API. Initializes FastAPI, loads configuration, sets up databases, and exposes REST endpoints.
+*   **`api/conversation_service.py`:** Core conversation logic extracted from the Discord bot, adapted for API use.
+*   **`api/models.py`:** Pydantic models for API requests and responses.
+*   **`lib/memory_db.py`:** Neo4j graph database interface for long-term memory.
+*   **`lib/sqlite_helper.py`:** SQLite interface for conversation history.
+*   **`system_prompt/`:** Directory containing Markdown files that define different AI personas.
+*   **`OllamaTools/`:** Directory containing tool definitions that the AI can use.
 
 ## Usage
 
-**Running the Bot:**
+### Running the API Server
 
-Ensure your `config.yml` is correctly configured and all dependencies (Python packages, Faiss, Neo4j, Ollama service) are set up and running.
+Ensure your `config.yml` is correctly configured and all dependencies (Neo4j, Ollama) are running.
 
 ```bash
 # Activate your environment (if using one)
-# conda activate nami 
+# conda activate nami
 
-# Run the main script
-python main.py 
+# Run the API server
+python api_server.py
 ```
 
-The bot will connect to Discord using the token provided in the configuration. Interact with it in the channels specified in `ai_channel`.
+The API will be available at `http://localhost:8000` (or the host/port configured in `config.yml`).
+
+### API Documentation
+
+Once running, access the interactive API documentation:
+- **Swagger UI:** `http://localhost:8000/docs`
+- **ReDoc:** `http://localhost:8000/redoc`
+- **OpenAPI JSON:** `http://localhost:8000/openapi.json`
+
+### Example API Usage
+
+**Python:**
+```python
+import requests
+
+response = requests.post(
+    "http://localhost:8000/chat",
+    json={
+        "message": "Hello, how are you?",
+        "user_id": "user123",
+        "conversation_id": "my_conversation"
+    }
+)
+
+print(response.json()["response"])
+```
+
+**cURL:**
+```bash
+curl -X POST "http://localhost:8000/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello!", "user_id": "user123", "conversation_id": "test"}'
+```
+
+### Main Endpoints
+
+- `POST /chat` - Send a message and get a response
+- `GET /conversations/{id}/history` - Get conversation history
+- `POST /memories/search` - Search memories
+- `POST /memories` - Create a new memory
+- `GET /health` - Health check
+- `GET /personality` - Get personality info
   
 ## Logs
 
@@ -102,16 +185,33 @@ Important logs generated by the bot can be found in the `logs/` directory. These
 * **Database logs:** Interactions with Neo4j and FAISS, including connection status and query results.
 * **Tool usage logs:** When the bot invokes tools (e.g., web search, memory search), these actions are logged for audit and debugging.
 
-## Workflow: What Happens When the Bot Receives a Message
+## Workflow: How a Chat Request is Processed
 
-1. **Message Received:** The bot receives a message in a configured Discord channel.
-2. **Preprocessing:** The message is checked for permissions, command triggers, and context relevance.
-3. **Semantic Search:** The bot uses FAISS and message embeddings to search its semantic memory for relevant past interactions or data.
-4. **System Prompt Selection:** The appropriate system prompt/persona is loaded based on configuration.
-5. **Tool Selection:** If the message requires external tools (e.g., web search, memory search), the bot selects and prepares the necessary tools.
-6. **AI Response Generation:** The bot sends the message, context, and tool definitions to the Ollama LLM service, which generates a response.
-7. **Postprocessing:** The response is checked for formatting, safety, and relevance.
-8. **Reply Sent:** The bot sends the response back to the Discord channel.
-9. **Logging:** All steps, including errors and tool usage, are logged in the `logs/` directory for future reference and debugging.
+1. **API Request Received:** Client sends POST request to `/chat` endpoint
+2. **Message Storage:** User message is stored in SQLite conversation history
+3. **History Retrieval:** Recent conversation history is loaded (up to `max_history` messages)
+4. **Memory Search:** Neo4j is queried for relevant memories based on message content
+5. **Context Building:** System prompt, user context, memories, and history are combined
+6. **LLM Processing:** Complete context is sent to Ollama with available tools
+7. **Tool Execution:** If LLM requests tools (e.g., web search), they are executed and results added to context
+8. **Response Generation:** Final response is generated by LLM
+9. **Memory Storage:** Important information is extracted and stored in Neo4j
+10. **Response Sent:** API returns response, thinking process (if requested), and tools used
+11. **Logging:** All steps, including errors and tool usage, are logged for debugging
+
+## Memory System
+
+The Neo4j-based memory system supports three types of memories:
+
+### Episodic Memory
+Experiences and events with emotional context.
+
+### Knowledge Units
+Factual information and statements.
+
+### Procedural Units
+Skills, processes, and how-to information.
+
+Memories are automatically extracted during conversations and can also be created via the API.
 
 
