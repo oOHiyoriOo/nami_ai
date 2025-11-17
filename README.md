@@ -1,117 +1,243 @@
-# Nami AI - Private AI Assistant
+# Personality Proxy API
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.x-blue.svg)](https://www.python.org/)
+An **Ollama-compatible** personality proxy system with pluggable AI backends. Add personality, long-term memory, and tools to any AI provider while maintaining compatibility with the Ollama API format.
 
-Nami AI is a private, locally-run AI assistant designed for to be less AI and more helpfull. 
-It leverages modern AI techniques to provide a good user Experience 
-and deliver some information on certain "AI-Experiments".
+## ✨ Features
 
-## Features
-*   **Privacy-Focused:** Runs locally, ensuring your data stays on your machine.
-*   **Extensible:** Designed with modularity in mind.
-*   **Less AI** Instructed to be more Helpfull then "ai"
+- 🔌 **Ollama-Compatible API** - Drop-in replacement for Ollama with personality enhancement
+- 🧠 **Multiple AI Backends** - Easily switch between Ollama, OpenAI, Anthropic, and more
+- 💾 **Neo4j Memory System** - Long-term memory (episodic, knowledge, procedural)
+- 🎭 **Personality Management** - Markdown-based character definitions
+- 🛠️ **Tool Integration** - Web search, memory queries, and custom tools
+- 📝 **Conversation History** - SQLite-based conversation tracking
+- 🔒 **Privacy-Focused** - Runs locally, your data stays on your machine
 
-## Installation
-
-1.  **Clone the repository:**
-    ```bash
-    git clone git@github.com:oOHiyoriOo/nami_ai.git
-    cd nami_ai
-    ```
-
-2.  **Create and activate a virtual environment (recommended):**
-    ```bash
-    conda create -n nami python=3.12
-    
-    conda activate nami
-    ```
-
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-## Configuration
-
-Nami AI uses a configuration file `config.yml` located in the project root to manage settings. Key settings include:
-
-*   `ai_channel`: A list of Discord channel IDs where the AI is active.
-    *   *Example:* `ai_channel: [1305130290384998441, 1355322226492182720]`
-*   `bot`: Settings related to the bot's operation.
-    *   `log_level`: Sets the logging level (e.g., 20 for INFO).
-*   `dc`: Discord-specific settings.
-    *   `admin_role`: ID of the Discord role considered admin for the bot.
-    *   `permitted_users`: List of user IDs allowed special permissions (if any).
-    *   `sync_guild`: Guild ID for syncing application commands (-1 for global).
-    *   `token`: Your Discord bot token (Keep this secret!).
-*   `ollama`: Configuration for the Ollama LLM service.
-    *   `model`: The specific Ollama model tag to use (e.g., `qwen2.5:32b-instruct`).
-    *   `system_prompt`: The name of the system prompt file (without extension) located in `system_prompt/` (e.g., `nami`).
-    *   `url`: The base URL for the Ollama API endpoint.
-    *   `max_tool_calls`: Maximum number of tool calls allowed per turn.
-*   `neo4j`: Connection details for the Neo4j graph database used for memory.
-    *   `uri`: The connection URI for the Neo4j instance.
-    *   `user`: Username for Neo4j authentication.
-    *   `pass`: Password for Neo4j authentication (Keep this secret!).
-
-*[The `config.yml` file should be placed in the root directory of the project.]*
-
-## Key Functions / Modules
-
-*[This section outlines the core components of the Nami AI.]*
-
-*   **`main.py`:** The main entry point for the application. Initializes the Discord client, loads configuration, sets up databases (Vector DB, Memory DB), loads commands, events, and tasks, and starts the bot.
-*   **`config.yml`:** Central configuration file as described above.
-*   **`lib/`:** Contains core library code.
-    *   `configurationFile.py`: Handles loading and accessing `config.yml`.
-    *   `memory_db.py`: Manages interaction with the Neo4j graph database for structured memory.
-    *   `vektor_database.py` (Likely typo, should be `vector_database.py`): Manages the FAISS vector store for semantic memory search.
-    *   `system_prompt_parser.py`: Loads and processes the selected system prompt file.
-    *   `load_commands.py`, `load_events.py`, `load_tasks.py`: Dynamically load respective components.
-    *   `vector_helper.py`: Contains logic for extracting information from messages for memory.
-    *   `semantic_search`: Used for searching semantic memory, leveraging FAISS and message embeddings. This enables the bot to retrieve contextually relevant information from previous interactions or stored data, improving its ability to answer questions and provide context-aware responses.
-*   **`system_prompt/`:** Directory containing Markdown files that define different AI personas (e.g., `nami.md`). The `ollama.system_prompt` setting in `config.yml` selects which persona to use.
-*   **`OllamaTools/`:** Directory containing definitions for tools the AI can use (e.g., `search_web`, `search_memory`, `core_memory`). These are presented to the LLM for function calling.
-
-## Usage
-
-**Running the Bot:**
-
-Ensure your `config.yml` is correctly configured and all dependencies (Python packages, Faiss, Neo4j, Ollama service) are set up and running.
+## 🚀 Quick Start
 
 ```bash
-# Activate your environment (if using one)
-# conda activate nami 
+# 1. Clone and install
+git clone git@github.com:oOHiyoriOo/nami_ai.git
+cd nami_ai
+pip install -r requirements.txt
 
-# Run the main script
-python main.py 
+# 2. Configure
+cp config.yml.example config.yml
+nano config.yml  # Edit with your settings
+
+# 3. Run
+python api_server.py
 ```
 
-The bot will connect to Discord using the token provided in the configuration. Interact with it in the channels specified in `ai_channel`.
-  
-## Logs
+**Use with any Ollama client:**
 
-Important logs generated by the bot can be found in the `logs/` directory. These logs include:
+```bash
+export OLLAMA_HOST=http://localhost:11434
+ollama run llama2
+```
 
-* **Startup logs:** Information about bot initialization, configuration loading, and environment setup.
-* **Command logs:** Details of commands received and executed, including errors and results.
-* **Event logs:** Records of Discord events such as messages, reactions, and member updates.
-* **AI response logs:** Logs of AI-generated responses, including semantic search results and tool usage.
-* **Error logs:** Tracebacks and error messages for debugging.
-* **Database logs:** Interactions with Neo4j and FAISS, including connection status and query results.
-* **Tool usage logs:** When the bot invokes tools (e.g., web search, memory search), these actions are logged for audit and debugging.
+```python
+from ollama import Client
 
-## Workflow: What Happens When the Bot Receives a Message
+client = Client(host='http://localhost:11434')
+response = client.chat(
+    model='llama2',
+    messages=[{'role': 'user', 'content': 'Hello!'}],
+    options={'user_id': 'alice', 'enable_memory': True}
+)
+```
 
-1. **Message Received:** The bot receives a message in a configured Discord channel.
-2. **Preprocessing:** The message is checked for permissions, command triggers, and context relevance.
-3. **Semantic Search:** The bot uses FAISS and message embeddings to search its semantic memory for relevant past interactions or data.
-4. **System Prompt Selection:** The appropriate system prompt/persona is loaded based on configuration.
-5. **Tool Selection:** If the message requires external tools (e.g., web search, memory search), the bot selects and prepares the necessary tools.
-6. **AI Response Generation:** The bot sends the message, context, and tool definitions to the Ollama LLM service, which generates a response.
-7. **Postprocessing:** The response is checked for formatting, safety, and relevance.
-8. **Reply Sent:** The bot sends the response back to the Discord channel.
-9. **Logging:** All steps, including errors and tool usage, are logged in the `logs/` directory for future reference and debugging.
+[**→ Full Quick Start Guide**](docs/QUICKSTART.md)
 
+## 📚 Documentation
 
+| Guide | Description |
+|-------|-------------|
+| [**Quick Start**](docs/QUICKSTART.md) | Get up and running in 5 minutes |
+| [**AI Providers**](docs/PROVIDERS.md) | Switch between Ollama, OpenAI, Anthropic, or create your own |
+| [**API Reference**](docs/API_REFERENCE.md) | Complete API documentation |
+| [**Memory System**](docs/MEMORY_SYSTEM.md) | Neo4j memory configuration and usage |
+| [**Tools**](docs/TOOLS.md) | Create custom tools for function calling |
+
+## 🏗️ Architecture
+
+```
+Client (Ollama-compatible) → Personality Proxy API
+                                    ├── Provider Layer (Pluggable)
+                                    │   ├── Ollama Provider
+                                    │   ├── OpenAI Provider
+                                    │   └── Your Custom Provider
+                                    ├── Neo4j (Memory DB)
+                                    ├── SQLite (Conversation History)
+                                    └── Tools System
+```
+
+## 🔌 Switching AI Providers
+
+Change one line in `config.yml`:
+
+```yaml
+# Use Ollama (local, free)
+ai_provider: ollama
+
+providers:
+  ollama:
+    url: http://localhost:11434
+    model: llama2
+```
+
+```yaml
+# Use OpenAI (hosted, GPT-4)
+ai_provider: openai
+
+providers:
+  openai:
+    api_key: sk-your-key
+    model: gpt-4
+```
+
+[**→ Providers Guide**](docs/PROVIDERS.md)
+
+## 🎭 Personalities
+
+Personalities are Markdown files in `system_prompt/`:
+
+```markdown
+# Nami - AI Assistant
+
+## Personality
+- Friendly and helpful
+- Technical but accessible
+
+## Communication Style
+- Use clear, concise language
+- Provide examples when helpful
+```
+
+Switch personalities in config:
+
+```yaml
+providers:
+  ollama:
+    system_prompt: nami  # Uses system_prompt/nami.md
+```
+
+## 💾 Memory System
+
+Neo4j-backed long-term memory automatically:
+- **Retrieves** relevant memories for each conversation
+- **Stores** important information from interactions
+- **Organizes** memories as episodic, knowledge, and procedural
+
+```bash
+User: "I love hiking in mountains"
+  ↓
+Memory created: "User enjoys hiking in mountains"
+  ↓
+Later conversation automatically includes this context
+```
+
+[**→ Memory System Guide**](docs/MEMORY_SYSTEM.md)
+
+## 🛠️ Tools
+
+Built-in tools:
+- `search_memory` - Query the memory database
+- `search_web` - Search the web (Brave API)
+- `visit_web_page` - Extract web page content
+- `generate_comfy_image` - Generate images (ComfyUI)
+
+Create custom tools in `OllamaTools/`:
+
+```python
+async def my_tool(client, source_user, param: str):
+    """Tool description for the AI."""
+    return f"Processed: {param}"
+
+tool_definition = {
+    "type": "function",
+    "function": {
+        "name": "my_tool",
+        "description": "What this tool does",
+        "parameters": {...}
+    },
+    "func": my_tool
+}
+```
+
+[**→ Tools Guide**](docs/TOOLS.md)
+
+## 📡 API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/chat` | Chat completion (Ollama format) |
+| `POST /api/generate` | Text generation |
+| `GET /api/tags` | List available models |
+| `GET /health` | Health check |
+
+[**→ API Reference**](docs/API_REFERENCE.md)
+
+## 🎯 Use Cases
+
+- **Personal AI Assistant** - Remembers your preferences and context
+- **Customer Support** - Maintains conversation history per customer
+- **Educational Tutor** - Tracks student progress and learning
+- **Development Assistant** - Remembers your coding style and projects
+- **Research Assistant** - Builds knowledge base from interactions
+
+## 🤝 Contributing
+
+Contributions welcome! To add a new AI provider:
+
+1. Implement `AIProvider` interface in `lib/ai_providers/`
+2. Register in `ProviderRegistry`
+3. Add config example to `config.yml.example`
+4. Submit pull request
+
+[**→ Provider Development Guide**](docs/PROVIDERS.md#creating-a-custom-provider)
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+- **Documentation**: [docs/](docs/)
+- **Issues**: https://github.com/oOHiyoriOo/nami_ai/issues
+- **Discussions**: https://github.com/oOHiyoriOo/nami_ai/discussions
+
+## 🗂️ Project Structure
+
+```
+nami_ai/
+├── api_server.py       # Main API server (Ollama-compatible)
+├── lib/
+│   ├── ai_providers/          # AI provider implementations
+│   │   ├── base_provider.py   # Abstract base class
+│   │   ├── ollama_provider.py # Ollama implementation
+│   │   └── openai_provider.py # OpenAI implementation
+│   ├── memory_db.py           # Neo4j memory interface
+│   └── ...
+├── system_prompt/             # Personality definitions
+│   ├── nami.md
+│   └── ranni.md
+├── OllamaTools/              # Tool implementations
+├── docs/                      # Documentation
+├── config.yml                # Configuration
+└── requirements.txt          # Dependencies
+```
+
+## 🚀 What's Next?
+
+1. [**Get Started**](docs/QUICKSTART.md) - Quick start guide
+2. [**Configure Provider**](docs/PROVIDERS.md) - Choose your AI backend
+3. [**Customize Personality**](system_prompt/) - Edit personality files
+4. [**Add Tools**](docs/TOOLS.md) - Create custom tools
+5. [**Explore API**](docs/API_REFERENCE.md) - Build your integration
+
+---
+
+**Made with ❤️ for the AI community**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
