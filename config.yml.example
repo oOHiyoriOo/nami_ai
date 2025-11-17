@@ -1,7 +1,34 @@
 # API Server settings
 api:
   host: "0.0.0.0"
-  port: 8000
+  port: 11434  # Default Ollama port for compatibility
+
+# AI Provider selection - choose which backend to use
+ai_provider: ollama  # Options: ollama, openai, anthropic (when implemented)
+
+# AI Provider configurations
+providers:
+  # Ollama provider configuration
+  ollama:
+    url: http://192.168.188.178:11434
+    model: deepseek-r1:70b-llama-distill-q4_K_M-tools
+    system_prompt: nami  # File in system_prompt/ directory
+    max_tool_calls: 3
+
+  # OpenAI provider configuration (requires: pip install openai)
+  # Uncomment to use OpenAI instead of Ollama
+  # openai:
+  #   api_key: YOUR_OPENAI_API_KEY
+  #   model: gpt-4
+  #   system_prompt: nami
+  #   organization: YOUR_ORG_ID  # optional
+
+  # Anthropic provider configuration (requires: pip install anthropic)
+  # Uncomment to use Anthropic instead
+  # anthropic:
+  #   api_key: YOUR_ANTHROPIC_API_KEY
+  #   model: claude-3-opus-20240229
+  #   system_prompt: nami
 
 # Bot settings
 bot:
@@ -43,10 +70,3 @@ nextcloud:
   pass: NEXTCLOUD_PASSWORD_HERE
   url: http://nextcloud.example.com
   user: admin
-
-# Ollama settings for LLM interactions.
-ollama:
-  max_tool_calls: 3
-  model: deepseek-r1:70b-llama-distill-q4_K_M-tools
-  system_prompt: nami
-  url: http://192.168.188.178:11434

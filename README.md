@@ -1,217 +1,614 @@
-# Nami AI - Personality Proxy API
+# Personality Proxy API
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
-
-Nami AI is a personality proxy system that exposes AI personalities with Neo4j-backed memory through an OpenAPI interface. This allows you to use consistent AI personalities and memories with any AI backend.
-
-**NEW**: This project has been refactored from a Discord bot to a personality proxy API. The Discord bot code is preserved in the git history.
+An **Ollama-compatible** personality proxy system with pluggable AI backends. This system adds personality, long-term memory, and tools to any AI provider while maintaining compatibility with the Ollama API format.
 
 ## Features
 
-*   **OpenAPI Interface:** RESTful API for easy integration with any AI system
-*   **Personality Management:** System prompts that define AI character and behavior
-*   **Memory System:** Neo4j graph database for long-term memory (episodic, knowledge, procedural)
-*   **Conversation History:** SQLite-based conversation tracking
-*   **Tool Integration:** Built-in tools for web search, memory queries, and more
-*   **Privacy-Focused:** Runs locally, ensuring your data stays on your machine
-*   **Extensible:** Designed with modularity in mind
+- 🔌 **Ollama-Compatible API** - Drop-in replacement for Ollama with personality enhancement
+- 🧠 **Multiple AI Backends** - Easily switch between Ollama, OpenAI, Anthropic, and more
+- 💾 **Neo4j Memory System** - Long-term memory (episodic, knowledge, procedural)
+- 🎭 **Personality Management** - Markdown-based character definitions
+- 🛠️ **Tool Integration** - Web search, memory queries, and custom tools
+- 📝 **Conversation History** - SQLite-based conversation tracking
+- 🔒 **Privacy-Focused** - Runs locally, your data stays on your machine
 
 ## Architecture
 
 ```
-Client (Any AI) → OpenAPI Interface → Personality Proxy
-                                     ├── Neo4j (Memory DB)
-                                     ├── Ollama (LLM)
-                                     ├── SQLite (History)
-                                     └── Tools System
+Client (Ollama-compatible) → Personality Proxy API
+                                    ├── Provider Layer (Pluggable)
+                                    │   ├── Ollama Provider
+                                    │   ├── OpenAI Provider
+                                    │   └── Anthropic Provider (add your own!)
+                                    ├── Neo4j (Memory DB)
+                                    ├── SQLite (Conversation History)
+                                    └── Tools System
 ```
 
-## Installation
+## Quick Start
 
-1.  **Clone the repository:**
-    ```bash
-    git clone git@github.com:oOHiyoriOo/nami_ai.git
-    cd nami_ai
-    ```
+### 1. Installation
 
-2.  **Create and activate a virtual environment (recommended):**
-    ```bash
-    conda create -n nami python=3.12
-    
-    conda activate nami
-    ```
+```bash
+git clone git@github.com:oOHiyoriOo/nami_ai.git
+cd nami_ai
+pip install -r requirements.txt
+```
 
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+### 2. Configuration
 
-## Configuration
+Copy and edit the configuration file:
 
-Edit `config.yml` to configure the personality proxy:
+```bash
+cp config.yml.example config.yml
+# Edit config.yml with your settings
+```
+
+**Minimal configuration:**
 
 ```yaml
 api:
   host: "0.0.0.0"
-  port: 8000
+  port: 11434  # Ollama default port
+
+ai_provider: ollama  # Choose: ollama, openai
+
+providers:
+  ollama:
+    url: http://localhost:11434
+    model: llama2
+    system_prompt: nami
 
 neo4j:
-  uri: "bolt://localhost:7687"
-  user: "neo4j"
-  pass: "your_password"
-
-ollama:
-  url: "http://localhost:11434"
-  model: "qwen2.5:32b-instruct"
-  system_prompt: "nami"  # Name of the file in system_prompt/ directory
-  max_tool_calls: 10
+  uri: bolt://localhost:7687
+  user: neo4j
+  pass: your_password
 
 memory_db:
-  model: "all-MiniLM-L6-v2"  # Embedding model
-
-bot:
-  log_level: "INFO"
+  model: all-MiniLM-L6-v2
 ```
 
-Key settings:
-*   `api`: API server configuration (host, port)
-*   `neo4j`: Connection details for the Neo4j graph database used for memory
-*   `ollama`: Configuration for the Ollama LLM service
-*   `memory_db`: Embedding model configuration
-*   `bot.log_level`: Sets the logging level (e.g., INFO, DEBUG)
+### 3. Run the Server
+
+```bash
+python api_server_ollama.py
+```
+
+The API will be available at `http://localhost:11434` (compatible with Ollama clients).
+
+### 4. Use with Any Ollama Client
+
+The API is compatible with the Ollama API, so you can use it with any existing Ollama client:
+
+**Command line (ollama CLI):**
+```bash
+# Set the API endpoint
+export OLLAMA_HOST=http://localhost:11434
+
+# Use as normal
+ollama run llama2
+```
+
+**Python (ollama library):**
+```python
+from ollama import Client
+
+client = Client(host='http://localhost:11434')
+
+response = client.chat(
+    model='llama2',
+    messages=[
+        {'role': 'user', 'content': 'Hello!'}
+    ],
+    # Optional: personality proxy extensions
+    options={
+        'user_id': 'alice',
+        'enable_memory': True,
+        'enable_personality': True
+    }
+)
+
+print(response['message']['content'])
+```
+
+**cURL:**
+```bash
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama2",
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ],
+  "user_id": "alice",
+  "enable_memory": true
+}'
+```
+
+## Switching AI Providers
+
+The system supports multiple AI backends. Simply change the `ai_provider` in `config.yml`:
+
+### Use Ollama (Local)
+
+```yaml
+ai_provider: ollama
+
+providers:
+  ollama:
+    url: http://localhost:11434
+    model: llama2
+    system_prompt: nami
+```
+
+### Use OpenAI
+
+```bash
+# Install OpenAI library
+pip install openai
+```
+
+```yaml
+ai_provider: openai
+
+providers:
+  openai:
+    api_key: sk-your-api-key
+    model: gpt-4
+    system_prompt: nami
+```
+
+### Use Anthropic Claude
+
+```bash
+# Install Anthropic library (when provider is implemented)
+pip install anthropic
+```
+
+```yaml
+ai_provider: anthropic
+
+providers:
+  anthropic:
+    api_key: your-api-key
+    model: claude-3-opus-20240229
+    system_prompt: nami
+```
+
+## Adding Your Own AI Provider
+
+Creating a new provider is simple:
+
+1. Create a new file in `lib/ai_providers/your_provider.py`:
+
+```python
+from lib.ai_providers import AIProvider, Message, ChatResponse
+
+class YourProvider(AIProvider):
+    def __init__(self, config):
+        super().__init__(config)
+        # Initialize your AI client here
+
+    async def chat(self, messages, tools=None, **kwargs):
+        # Implement chat completion
+        # Return ChatResponse object
+        pass
+
+    async def chat_stream(self, messages, tools=None, **kwargs):
+        # Implement streaming
+        # Yield chunks of text
+        pass
+
+    def list_models(self):
+        # Return list of available models
+        return ["model1", "model2"]
+
+    def get_provider_name(self):
+        return "your_provider"
+```
+
+2. Register your provider in `lib/ai_providers/__init__.py`:
+
+```python
+from .your_provider import YourProvider
+
+ProviderRegistry.register_provider("your_provider", YourProvider)
+```
+
+3. Configure in `config.yml`:
+
+```yaml
+ai_provider: your_provider
+
+providers:
+  your_provider:
+    api_key: your-key
+    model: your-model
+    system_prompt: nami
+```
+
+That's it! The personality proxy will now use your provider.
+
+## API Endpoints
+
+The API is Ollama-compatible with extensions:
+
+### Chat Completion
+
+**POST** `/api/chat`
+
+```json
+{
+  "model": "llama2",
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ],
+  "stream": false,
+  "user_id": "alice",           // Extension: for memory
+  "conversation_id": "chat123",  // Extension: for context
+  "enable_memory": true,         // Extension: use memory system
+  "enable_personality": true     // Extension: use personality prompt
+}
+```
+
+### Generate Completion
+
+**POST** `/api/generate`
+
+```json
+{
+  "model": "llama2",
+  "prompt": "Why is the sky blue?",
+  "stream": false,
+  "user_id": "alice",
+  "enable_memory": true
+}
+```
+
+### List Models
+
+**GET** `/api/tags`
+
+Returns available models from the current provider.
+
+### Version Info
+
+**GET** `/` or **GET** `/api/version`
+
+Returns API version and capabilities.
+
+### Health Check
+
+**GET** `/health`
+
+Returns provider status and memory database stats.
+
+## Personality System
+
+Personalities are defined in Markdown files in the `system_prompt/` directory.
+
+**Example:** `system_prompt/nami.md`
+
+```markdown
+# Nami - AI Assistant
+
+## Personality
+- Friendly and helpful
+- Technical but accessible
+- Patient with explanations
+
+## Communication Style
+- Use clear, concise language
+- Provide examples when helpful
+- Ask clarifying questions when needed
+
+## Behavioral Guidelines
+- Always verify information before sharing
+- Admit when unsure about something
+- Respect user privacy and boundaries
+```
+
+Switch personalities by changing `system_prompt` in the provider config:
+
+```yaml
+providers:
+  ollama:
+    system_prompt: nami  # Uses system_prompt/nami.md
+```
+
+## Memory System
+
+The Neo4j-based memory system automatically stores and retrieves relevant information.
+
+### Memory Types
+
+1. **Episodic Memory** - Experiences and events with emotional context
+2. **Knowledge Units** - Factual information and statements
+3. **Procedural Units** - Skills, processes, and how-to information
+
+### How It Works
+
+1. User sends a message
+2. System searches Neo4j for relevant memories
+3. Top memories are added to context automatically
+4. AI generates response with full context
+5. Important information is extracted and stored as new memories
+
+### Memory Configuration
+
+```yaml
+memory_db:
+  model: all-MiniLM-L6-v2  # Embedding model for similarity search
+
+neo4j:
+  uri: bolt://localhost:7687
+  user: neo4j
+  pass: your_password
+```
+
+## Tools System
+
+The personality can use various tools automatically:
+
+- **search_memory** - Query the memory database
+- **search_web** - Search the web for information (requires Brave API key)
+- **visit_web_page** - Extract content from URLs
+- **generate_comfy_image** - Generate images (requires ComfyUI)
+- **query_audit_log** - Access system logs
+
+Tools are automatically loaded from `OllamaTools/` and presented to the AI.
 
 ## Project Structure
 
 ```
 nami_ai/
-├── api/
-│   ├── models.py              # Pydantic models for API
-│   └── conversation_service.py # Core chat logic
-├── api_server.py              # FastAPI application (main entry point)
+├── api_server_ollama.py       # Main API server (Ollama-compatible)
 ├── lib/
-│   ├── configurationFile.py   # Config loading
+│   ├── ai_providers/          # AI provider implementations
+│   │   ├── base_provider.py   # Abstract base class
+│   │   ├── ollama_provider.py # Ollama implementation
+│   │   ├── openai_provider.py # OpenAI implementation
+│   │   └── __init__.py        # Provider registry
 │   ├── memory_db.py           # Neo4j memory interface
-│   ├── sqlite_helper.py       # SQLite history
-│   ├── ollama_helper.py       # Ollama LLM integration
-│   ├── vector_helper.py       # Vector/embedding utilities
-│   ├── system_prompt_parser.py # System prompt loader
+│   ├── sqlite_helper.py       # SQLite conversation history
 │   └── ...
-├── system_prompt/             # Personality definitions (Markdown files)
+├── system_prompt/             # Personality definitions
 │   ├── nami.md
 │   └── ranni.md
 ├── OllamaTools/              # Tool implementations
-├── main_discord_bot.py       # Legacy Discord bot (preserved)
 ├── config.yml                # Configuration
-├── requirements.txt          # Python dependencies
-└── README.md                 # This file
+└── requirements.txt          # Dependencies
 ```
 
-Key components:
-*   **`api_server.py`:** The main entry point for the API. Initializes FastAPI, loads configuration, sets up databases, and exposes REST endpoints.
-*   **`api/conversation_service.py`:** Core conversation logic extracted from the Discord bot, adapted for API use.
-*   **`api/models.py`:** Pydantic models for API requests and responses.
-*   **`lib/memory_db.py`:** Neo4j graph database interface for long-term memory.
-*   **`lib/sqlite_helper.py`:** SQLite interface for conversation history.
-*   **`system_prompt/`:** Directory containing Markdown files that define different AI personas.
-*   **`OllamaTools/`:** Directory containing tool definitions that the AI can use.
+## Configuration Reference
 
-## Usage
+### Complete Example
 
-### Running the API Server
+```yaml
+# API Server
+api:
+  host: "0.0.0.0"
+  port: 11434
 
-Ensure your `config.yml` is correctly configured and all dependencies (Neo4j, Ollama) are running.
+# Provider Selection
+ai_provider: ollama  # ollama, openai, anthropic
 
-```bash
-# Activate your environment (if using one)
-# conda activate nami
+# Provider Configurations
+providers:
+  ollama:
+    url: http://localhost:11434
+    model: llama2
+    system_prompt: nami
+    max_tool_calls: 3
 
-# Run the API server
-python api_server.py
+  openai:
+    api_key: sk-your-key
+    model: gpt-4
+    system_prompt: nami
+    organization: org-id  # optional
+
+# Memory Database
+neo4j:
+  uri: bolt://localhost:7687
+  user: neo4j
+  pass: password
+
+memory_db:
+  model: all-MiniLM-L6-v2
+
+# General Settings
+bot:
+  log_level: INFO
+  brave_search_token: YOUR_TOKEN  # For web search tool
+
+# Image Generation (optional)
+comfyui:
+  server: localhost:8188
+  workflow: workflow.json
+  output: image_output
+
+# Image Storage (optional)
+nextcloud:
+  url: https://your-nextcloud.com
+  user: admin
+  pass: password
 ```
 
-The API will be available at `http://localhost:8000` (or the host/port configured in `config.yml`).
+## Integration Examples
 
-### API Documentation
+### Python with ollama Library
 
-Once running, access the interactive API documentation:
-- **Swagger UI:** `http://localhost:8000/docs`
-- **ReDoc:** `http://localhost:8000/redoc`
-- **OpenAPI JSON:** `http://localhost:8000/openapi.json`
-
-### Example API Usage
-
-**Python:**
 ```python
-import requests
+from ollama import Client
 
-response = requests.post(
-    "http://localhost:8000/chat",
-    json={
-        "message": "Hello, how are you?",
-        "user_id": "user123",
-        "conversation_id": "my_conversation"
-    }
+client = Client(host='http://localhost:11434')
+
+# Simple chat
+response = client.chat(
+    model='llama2',
+    messages=[
+        {'role': 'user', 'content': 'Hello!'}
+    ]
 )
 
-print(response.json()["response"])
+# With personality extensions
+response = client.chat(
+    model='llama2',
+    messages=[
+        {'role': 'user', 'content': 'What did we talk about yesterday?'}
+    ],
+    options={
+        'user_id': 'alice',
+        'conversation_id': 'daily_chat',
+        'enable_memory': True,
+        'enable_personality': True
+    }
+)
 ```
 
-**cURL:**
+### Streaming Response
+
+```python
+stream = client.chat(
+    model='llama2',
+    messages=[{'role': 'user', 'content': 'Tell me a story'}],
+    stream=True
+)
+
+for chunk in stream:
+    print(chunk['message']['content'], end='', flush=True)
+```
+
+### Using Different Personalities
+
+```python
+# Use Nami personality
+client.chat(
+    model='llama2',  # Note: model is from provider config
+    messages=[{'role': 'user', 'content': 'Hi'}],
+    options={'enable_personality': True}
+)
+
+# Change personality by updating config.yml:
+# providers.ollama.system_prompt: ranni
+# Then restart the server
+```
+
+## Troubleshooting
+
+### Provider Connection Issues
+
+**Ollama not connecting:**
 ```bash
-curl -X POST "http://localhost:8000/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello!", "user_id": "user123", "conversation_id": "test"}'
+# Check Ollama is running
+ollama list
+
+# Check URL in config
+curl http://localhost:11434/api/tags
 ```
 
-### Main Endpoints
+**OpenAI authentication failed:**
+- Verify API key is correct
+- Check organization ID (if using)
+- Ensure billing is set up
 
-- `POST /chat` - Send a message and get a response
-- `GET /conversations/{id}/history` - Get conversation history
-- `POST /memories/search` - Search memories
-- `POST /memories` - Create a new memory
-- `GET /health` - Health check
-- `GET /personality` - Get personality info
-  
-## Logs
+### Memory Issues
 
-Important logs generated by the bot can be found in the `logs/` directory. These logs include:
+**Neo4j connection failed:**
+```bash
+# Check Neo4j is running
+systemctl status neo4j
 
-* **Startup logs:** Information about bot initialization, configuration loading, and environment setup.
-* **Command logs:** Details of commands received and executed, including errors and results.
-* **Event logs:** Records of Discord events such as messages, reactions, and member updates.
-* **AI response logs:** Logs of AI-generated responses, including semantic search results and tool usage.
-* **Error logs:** Tracebacks and error messages for debugging.
-* **Database logs:** Interactions with Neo4j and FAISS, including connection status and query results.
-* **Tool usage logs:** When the bot invokes tools (e.g., web search, memory search), these actions are logged for audit and debugging.
+# Test connection
+cypher-shell -a bolt://localhost:7687 -u neo4j -p password
+```
 
-## Workflow: How a Chat Request is Processed
+**No memories retrieved:**
+- Check Neo4j has data
+- Verify embedding model is downloaded
+- Lower `similarity_threshold` in code if needed
 
-1. **API Request Received:** Client sends POST request to `/chat` endpoint
-2. **Message Storage:** User message is stored in SQLite conversation history
-3. **History Retrieval:** Recent conversation history is loaded (up to `max_history` messages)
-4. **Memory Search:** Neo4j is queried for relevant memories based on message content
-5. **Context Building:** System prompt, user context, memories, and history are combined
-6. **LLM Processing:** Complete context is sent to Ollama with available tools
-7. **Tool Execution:** If LLM requests tools (e.g., web search), they are executed and results added to context
-8. **Response Generation:** Final response is generated by LLM
-9. **Memory Storage:** Important information is extracted and stored in Neo4j
-10. **Response Sent:** API returns response, thinking process (if requested), and tools used
-11. **Logging:** All steps, including errors and tool usage, are logged for debugging
+### API Issues
 
-## Memory System
+**Port already in use:**
+```yaml
+# Change port in config.yml
+api:
+  port: 8080  # Use different port
+```
 
-The Neo4j-based memory system supports three types of memories:
+**High latency:**
+- Check AI provider response time
+- Disable memory if not needed
+- Reduce `max_tool_calls`
 
-### Episodic Memory
-Experiences and events with emotional context.
+## Advanced Usage
 
-### Knowledge Units
-Factual information and statements.
+### Custom Tool Implementation
 
-### Procedural Units
-Skills, processes, and how-to information.
+Create a new file in `OllamaTools/my_tool.py`:
 
-Memories are automatically extracted during conversations and can also be created via the API.
+```python
+async def my_custom_tool(client, source_user, param1, param2):
+    """
+    Custom tool implementation.
+    """
+    # Your logic here
+    result = f"Processed {param1} and {param2}"
+    return result
 
+# Tool definition
+tool_definition = {
+    "type": "function",
+    "function": {
+        "name": "my_custom_tool",
+        "description": "What this tool does",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "param1": {
+                    "type": "string",
+                    "description": "First parameter"
+                },
+                "param2": {
+                    "type": "string",
+                    "description": "Second parameter"
+                }
+            },
+            "required": ["param1"]
+        }
+    },
+    "func": my_custom_tool
+}
+```
 
+Tools are automatically loaded and available to the AI.
+
+### Running Multiple Instances
+
+You can run multiple instances with different configurations:
+
+```bash
+# Instance 1: Ollama with Nami personality
+python api_server_ollama.py --config config_nami.yml --port 11434
+
+# Instance 2: OpenAI with Ranni personality
+python api_server_ollama.py --config config_ranni.yml --port 11435
+```
+
+## License
+
+MIT License - see LICENSE file for details.
+
+## Contributing
+
+Contributions welcome! To add a new AI provider:
+
+1. Implement the `AIProvider` interface
+2. Register in `ProviderRegistry`
+3. Add example config to `config.yml.example`
+4. Submit a pull request
+
+## Support
+
+- GitHub Issues: https://github.com/oOHiyoriOo/nami_ai/issues
+- Documentation: This README
+- Examples: See `examples/` directory (coming soon)
