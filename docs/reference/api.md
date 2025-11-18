@@ -550,10 +550,10 @@ curl -X POST http://localhost:11434/api/chat \
 
 ## See Also
 
-- [Quick Start](QUICKSTART.md) - Get started quickly
-- [Providers](PROVIDERS.md) - AI provider configuration
-- [Memory System](MEMORY_SYSTEM.md) - Memory configuration
-- [Tools](TOOLS.md) - Tool development
+- [Quick Start](../guides/quickstart.md) - Get started quickly
+- [Providers](providers.md) - AI provider configuration
+- [Memory System](../memory/overview.md) - Memory configuration
+- [Tools](tools.md) - Tool development
 
 ---
 

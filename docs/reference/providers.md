@@ -433,9 +433,9 @@ for provider_name in providers:
 
 ## See Also
 
-- [API Reference](API_REFERENCE.md) - Complete API documentation
-- [Quick Start](QUICKSTART.md) - Get started quickly
-- [Memory System](MEMORY_SYSTEM.md) - Memory configuration
+- [API Reference](api.md) - Complete API documentation
+- [Quick Start](../guides/quickstart.md) - Get started quickly
+- [Memory System](../memory/overview.md) - Memory configuration
 
 ---
 

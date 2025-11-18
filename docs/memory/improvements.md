@@ -81,7 +81,7 @@ The memory system has been significantly enhanced with six major improvements ba
 - `lib/services/memory_consolidation.py` - Periodic optimization
 - `lib/services/memory_operations.py` - Advanced CRUD operations
 - `lib/services/memory_analytics.py` - Monitoring and diagnostics
-- `docs/MEMORY_SYSTEM_V2.md` - Comprehensive documentation
+- `docs/advanced-features.md` - Comprehensive documentation
 
 ### Modified Files
 - `lib/services/memory_service.py` - Integrated new features
@@ -168,8 +168,8 @@ The new features are **opt-in enhancements**:
 
 ## Documentation
 
-- **[MEMORY_SYSTEM_V2.md](docs/MEMORY_SYSTEM_V2.md)** - Comprehensive guide
-- **[MEMORY_SYSTEM.md](docs/MEMORY_SYSTEM.md)** - Original V1 documentation
+- **[advanced-features.md](docs/../memory/advanced-features.md)** - Comprehensive guide
+- **[overview.md](docs/../memory/overview.md)** - Original V1 documentation
 
 ## Testing
 
@@ -209,7 +209,7 @@ print(f"Total memories: {health['database']['total_memories']}")
 
 ## Next Steps
 
-1. **Review** - Read [MEMORY_SYSTEM_V2.md](docs/MEMORY_SYSTEM_V2.md)
+1. **Review** - Read [advanced-features.md](docs/../memory/advanced-features.md)
 2. **Test** - Try basic retrieval with user_id
 3. **Monitor** - Check analytics dashboard
 4. **Optimize** - Enable consolidation if needed
@@ -218,7 +218,7 @@ print(f"Total memories: {health['database']['total_memories']}")
 
 - Open an issue on GitHub
 - Check the documentation
-- Review example code in MEMORY_SYSTEM_V2.md
+- Review example code in advanced-features.md
 
 ---
 

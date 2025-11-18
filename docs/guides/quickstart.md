@@ -153,10 +153,10 @@ ollama run llama2
 
 ## What's Next?
 
-- **[Providers Guide](PROVIDERS.md)** - Switch to OpenAI, Anthropic, or add your own
-- **[Memory System](MEMORY_SYSTEM.md)** - Understand how memories work
-- **[API Reference](API_REFERENCE.md)** - Complete API documentation
-- **[Tools](TOOLS.md)** - Add custom tools
+- **[Providers Guide](../reference/providers.md)** - Switch to OpenAI, Anthropic, or add your own
+- **[Memory System](../memory/overview.md)** - Understand how memories work
+- **[API Reference](../reference/api.md)** - Complete API documentation
+- **[Tools](../reference/tools.md)** - Add custom tools
 - **[Personalities](../system_prompt/)** - Create custom personalities
 
 ## Troubleshooting

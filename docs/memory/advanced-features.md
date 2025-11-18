@@ -676,9 +676,9 @@ print(stats)
 
 ## See Also
 
-- [Memory System V1 Documentation](MEMORY_SYSTEM.md)
-- [Quick Start Guide](QUICKSTART.md)
-- [API Reference](API_REFERENCE.md)
+- [Memory System V1 Documentation](overview.md)
+- [Quick Start Guide](../guides/quickstart.md)
+- [API Reference](../reference/api.md)
 
 ---
 
