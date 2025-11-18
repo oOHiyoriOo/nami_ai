@@ -641,9 +641,9 @@ providers:
 
 ## See Also
 
-- [API Reference](API_REFERENCE.md) - API documentation
-- [Quick Start](QUICKSTART.md) - Get started
-- [Memory System](MEMORY_SYSTEM.md) - Memory tools
+- [API Reference](api.md) - API documentation
+- [Quick Start](../guides/quickstart.md) - Get started
+- [Memory System](../memory/overview.md) - Memory tools
 
 ---
 

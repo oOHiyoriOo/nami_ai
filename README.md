@@ -46,17 +46,18 @@ response = client.chat(
 )
 ```
 
-[**→ Full Quick Start Guide**](docs/QUICKSTART.md)
+[**→ Full Quick Start Guide**](docs/guides/quickstart.md)
 
 ## 📚 Documentation
 
 | Guide | Description |
 |-------|-------------|
-| [**Quick Start**](docs/QUICKSTART.md) | Get up and running in 5 minutes |
-| [**AI Providers**](docs/PROVIDERS.md) | Switch between Ollama, OpenAI, Anthropic, or create your own |
-| [**API Reference**](docs/API_REFERENCE.md) | Complete API documentation |
-| [**Memory System**](docs/MEMORY_SYSTEM.md) | Neo4j memory configuration and usage |
-| [**Tools**](docs/TOOLS.md) | Create custom tools for function calling |
+| [**Quick Start**](docs/guides/quickstart.md) | Get up and running in 5 minutes |
+| [**AI Providers**](docs/reference/providers.md) | Switch between Ollama, OpenAI, Anthropic, or create your own |
+| [**API Reference**](docs/reference/api.md) | Complete API documentation |
+| [**Memory System**](docs/memory/overview.md) | Neo4j memory configuration and usage |
+| [**Memory V2 Features**](docs/memory/advanced-features.md) | Hierarchy, decay, consolidation, analytics |
+| [**Tools**](docs/reference/tools.md) | Create custom tools for function calling |
 
 ## 🏗️ Architecture
 
@@ -95,7 +96,7 @@ providers:
     model: gpt-4
 ```
 
-[**→ Providers Guide**](docs/PROVIDERS.md)
+[**→ Providers Guide**](docs/reference/providers.md)
 
 ## 🎭 Personalities
 
@@ -136,7 +137,7 @@ Memory created: "User enjoys hiking in mountains"
 Later conversation automatically includes this context
 ```
 
-[**→ Memory System Guide**](docs/MEMORY_SYSTEM.md)
+[**→ Memory System Guide**](docs/memory/overview.md)
 
 ## 🛠️ Tools
 
@@ -164,7 +165,7 @@ tool_definition = {
 }
 ```
 
-[**→ Tools Guide**](docs/TOOLS.md)
+[**→ Tools Guide**](docs/reference/tools.md)
 
 ## 📡 API Endpoints
 
@@ -175,7 +176,7 @@ tool_definition = {
 | `GET /api/tags` | List available models |
 | `GET /health` | Health check |
 
-[**→ API Reference**](docs/API_REFERENCE.md)
+[**→ API Reference**](docs/reference/api.md)
 
 ## 🎯 Use Cases
 
@@ -194,7 +195,7 @@ Contributions welcome! To add a new AI provider:
 3. Add config example to `config.yml.example`
 4. Submit pull request
 
-[**→ Provider Development Guide**](docs/PROVIDERS.md#creating-a-custom-provider)
+[**→ Provider Development Guide**](docs/reference/providers.md#creating-a-custom-provider)
 
 ## 📄 License
 
@@ -229,11 +230,12 @@ nami_ai/
 
 ## 🚀 What's Next?
 
-1. [**Get Started**](docs/QUICKSTART.md) - Quick start guide
-2. [**Configure Provider**](docs/PROVIDERS.md) - Choose your AI backend
+1. [**Get Started**](docs/guides/quickstart.md) - Quick start guide
+2. [**Configure Provider**](docs/reference/providers.md) - Choose your AI backend
 3. [**Customize Personality**](system_prompt/) - Edit personality files
-4. [**Add Tools**](docs/TOOLS.md) - Create custom tools
-5. [**Explore API**](docs/API_REFERENCE.md) - Build your integration
+4. [**Add Tools**](docs/reference/tools.md) - Create custom tools
+5. [**Explore API**](docs/reference/api.md) - Build your integration
+6. [**Memory V2 Features**](docs/memory/advanced-features.md) - Advanced memory capabilities
 
 ---
 

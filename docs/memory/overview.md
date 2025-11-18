@@ -540,9 +540,9 @@ if total > 10000:
 
 ## See Also
 
-- [Quick Start](QUICKSTART.md) - Get started
-- [API Reference](API_REFERENCE.md) - API docs
-- [Tools](TOOLS.md) - Memory tools
+- [Quick Start](../guides/quickstart.md) - Get started
+- [API Reference](../reference/api.md) - API docs
+- [Tools](../reference/tools.md) - Memory tools
 
 ---
 

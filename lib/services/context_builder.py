@@ -107,6 +107,7 @@ class ContextBuilder:
             # Retrieve and format memories
             formatted_memories = await self.memory_service.get_formatted_memories(
                 query=last_user_msg,
+                user_id=user_id,
                 top_k=5,
                 context_k=20
             )
