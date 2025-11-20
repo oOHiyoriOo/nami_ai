@@ -297,6 +297,11 @@ async def chat(request: OllamaChatRequest):
         response = await provider.chat(enhanced_messages, tools, model=model_name)
         duration = int((time.time() - start_time) * 1000000000)
 
+        # Record successful model usage
+        model_cache = g_data.get("model_cache")
+        if model_cache:
+            model_cache.record_success(request.model)
+
         return OllamaChatResponse(
             model=request.model,
             created_at=datetime.utcnow().isoformat() + "Z",
@@ -319,23 +324,35 @@ async def chat(request: OllamaChatRequest):
 async def handle_streaming_chat(provider, model: str, messages: List[Message], tools: Optional[List[Dict]], full_model: str):
     """Handle streaming chat response."""
     async def generate_stream():
-        async for chunk in provider.chat_stream(messages, tools, model=model):
-            response_chunk = {
+        success = False
+        try:
+            async for chunk in provider.chat_stream(messages, tools, model=model):
+                success = True  # At least one chunk received
+                response_chunk = {
+                    "model": full_model,
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                    "message": {"role": "assistant", "content": chunk},
+                    "done": False
+                }
+                yield f"{response_chunk}\n"
+
+            # Record successful streaming
+            if success:
+                model_cache = g_data.get("model_cache")
+                if model_cache:
+                    model_cache.record_success(full_model)
+
+            # Final chunk
+            final = {
                 "model": full_model,
                 "created_at": datetime.utcnow().isoformat() + "Z",
-                "message": {"role": "assistant", "content": chunk},
-                "done": False
+                "message": {"role": "assistant", "content": ""},
+                "done": True
             }
-            yield f"{response_chunk}\n"
-
-        # Final chunk
-        final = {
-            "model": full_model,
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "message": {"role": "assistant", "content": ""},
-            "done": True
-        }
-        yield f"{final}\n"
+            yield f"{final}\n"
+        except Exception as e:
+            logging.error(f"Streaming error: {e}", exc_info=True)
+            raise
 
     return StreamingResponse(generate_stream(), media_type="application/x-ndjson")
 
@@ -366,44 +383,51 @@ async def generate(request: OllamaGenerateRequest):
 
 @app.get("/api/tags")
 async def list_tags():
-    """List available models (Ollama-compatible)."""
-    from lib.ai_providers import ProviderRegistry
-
+    """List available models (Ollama-compatible) - returns cached successfully used models."""
     try:
         cfg = g_data.get("cfg")
         if not cfg:
             raise HTTPException(status_code=503, detail="Configuration not loaded")
 
-        # Get all configured providers
-        providers_config = cfg.data.get('providers', {})
-        all_models = []
+        model_cache = g_data.get("model_cache")
 
-        for provider_name, provider_config in providers_config.items():
-            try:
-                # Try to get or create provider
-                provider = get_or_create_provider(provider_name)
-                models = provider.list_models()
+        # Return cached models if available
+        if model_cache:
+            cached_models = model_cache.to_ollama_format()
+            if cached_models:
+                logging.debug(f"Returning {len(cached_models)} cached models")
+                return OllamaTagsResponse(models=cached_models)
+            else:
+                logging.info("No cached models yet, returning empty list")
+                return OllamaTagsResponse(models=[])
 
-                # Prefix models with provider name
-                for model in models:
-                    all_models.append({
-                        "name": f"{provider_name}/{model}",
-                        "modified_at": datetime.utcnow().isoformat() + "Z",
-                        "size": 0,
-                        "digest": "",
-                        "details": {
-                            "provider": provider_name,
-                            "model": model
-                        }
-                    })
-            except Exception as e:
-                logging.warning(f"Could not list models for provider '{provider_name}': {e}")
-                continue
-
-        return OllamaTagsResponse(models=all_models)
+        # Fallback: return empty list if cache not available
+        logging.warning("Model cache not available")
+        return OllamaTagsResponse(models=[])
 
     except Exception as e:
         logging.error(f"List models error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/models/stats")
+async def model_cache_stats():
+    """Get model cache statistics."""
+    try:
+        model_cache = g_data.get("model_cache")
+        if not model_cache:
+            raise HTTPException(status_code=503, detail="Model cache not available")
+
+        stats = model_cache.get_cache_stats()
+        return {
+            "status": "ok",
+            "cache": stats
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Cache stats error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
