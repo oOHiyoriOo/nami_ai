@@ -38,8 +38,6 @@ class AppInitializer:
         self.config = self._load_configuration()
 
         # Initialize components
-        await self._initialize_ai_provider()
-        await self._initialize_system_prompt()
         await self._initialize_memory_db()
         await self._initialize_history_db()
         await self._initialize_tools()
@@ -52,35 +50,17 @@ class AppInitializer:
         cfg = g_data.get_or_create("cfg", ConfigurationFile, self.config_path)
         return cfg
 
-    async def _initialize_ai_provider(self):
-        """Initialize AI provider."""
-        provider_name = self.config.data.get('ai_provider', 'ollama')
-        provider_config = self.config.data.get('providers', {}).get(
-            provider_name,
-            self.config.data.get('ollama', {})
-        )
+    def get_provider_config(self, provider_name: str) -> dict:
+        """
+        Get configuration for a specific provider.
 
-        try:
-            provider = ProviderRegistry.get_provider(provider_name, provider_config)
-            g_data.get_or_create("ai_provider", lambda: provider)
-            g_data.get_or_create("ai_provider_name", lambda: provider_name)
-            logging.info(f"Initialized AI provider: {provider_name}")
-        except Exception as e:
-            logging.error(f"Failed to initialize AI provider '{provider_name}': {e}")
-            raise
+        Args:
+            provider_name: Name of the provider
 
-    async def _initialize_system_prompt(self):
-        """Initialize system prompt."""
-        provider_name = self.config.data.get('ai_provider', 'ollama')
-        provider_config = self.config.data.get('providers', {}).get(provider_name, {})
-        system_prompt_filename = provider_config.get('system_prompt', 'nami')
-
-        sys_prompt_instance = g_data.get_or_create(
-            "system_prompt",
-            NamiSystemPrompt,
-            f"system_prompt/{system_prompt_filename}.md"
-        )
-        logging.info(f"Loaded system prompt: {system_prompt_filename}")
+        Returns:
+            Provider configuration dict
+        """
+        return self.config.data.get('providers', {}).get(provider_name, {})
 
     async def _initialize_memory_db(self):
         """Initialize Neo4j memory database."""
@@ -120,24 +100,30 @@ class AppInitializer:
         memory_service = MemoryService(memory_db)
         g_data.get_or_create("memory_service", lambda: memory_service)
 
+        # Load default system prompt (can be overridden per provider)
+        default_prompt = self.config.data.get('default_system_prompt', 'nami')
+        sys_prompt_instance = g_data.get_or_create(
+            "system_prompt",
+            NamiSystemPrompt,
+            f"system_prompt/{default_prompt}.md"
+        )
+
         # Create context builder
-        system_prompt = g_data.get("system_prompt")
-        context_builder = ContextBuilder(system_prompt, memory_service)
+        context_builder = ContextBuilder(sys_prompt_instance, memory_service)
         g_data.get_or_create("context_builder", lambda: context_builder)
 
         logging.info("Services initialized")
 
     def _log_startup_info(self):
         """Log startup information."""
-        provider_name = self.config.data.get('ai_provider', 'ollama')
-        provider_config = self.config.data.get('providers', {}).get(provider_name, {})
-        system_prompt_filename = provider_config.get('system_prompt', 'nami')
+        available_providers = list(self.config.data.get('providers', {}).keys())
+        default_prompt = self.config.data.get('default_system_prompt', 'nami')
 
         logging.info("=" * 70)
         logging.info(f"{Fore.GREEN}Personality Proxy API initialized!")
-        logging.info(f"Provider: {provider_name}")
-        logging.info(f"Personality: {system_prompt_filename}")
-        logging.info(f"Model: {provider_config.get('model', 'default')}")
+        logging.info(f"Available providers: {', '.join(available_providers)}")
+        logging.info(f"Default personality: {default_prompt}")
+        logging.info(f"Model format: <provider>/<model> (e.g., ollama/llama2, copilot/gpt-4.1)")
         logging.info("=" * 70)
 
     async def cleanup(self):
