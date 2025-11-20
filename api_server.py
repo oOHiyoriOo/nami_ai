@@ -123,6 +123,77 @@ app.add_middleware(
 
 # --- Helper Functions ---
 
+def parse_model_string(model: str) -> tuple:
+    """
+    Parse model string in format <provider>/<model>.
+
+    Args:
+        model: Model string (e.g., "ollama/llama2", "copilot/gpt-4.1")
+
+    Returns:
+        Tuple of (provider_name, model_name)
+
+    Raises:
+        ValueError: If model format is invalid
+    """
+    if '/' not in model:
+        raise ValueError(
+            f"Invalid model format: '{model}'. "
+            "Expected format: <provider>/<model> (e.g., 'ollama/llama2', 'copilot/gpt-4.1')"
+        )
+
+    parts = model.split('/', 1)
+    return parts[0], parts[1]
+
+
+def get_or_create_provider(provider_name: str):
+    """
+    Get or create a provider instance.
+
+    Args:
+        provider_name: Name of the provider
+
+    Returns:
+        Provider instance
+
+    Raises:
+        HTTPException: If provider not configured or initialization fails
+    """
+    from lib.ai_providers import ProviderRegistry
+
+    # Check if provider already exists in cache
+    cache_key = f"provider_{provider_name}"
+    cached_provider = g_data.get(cache_key)
+    if cached_provider:
+        return cached_provider
+
+    # Get config
+    cfg = g_data.get("cfg")
+    if not cfg:
+        raise HTTPException(status_code=503, detail="Configuration not loaded")
+
+    provider_config = cfg.data.get('providers', {}).get(provider_name)
+    if not provider_config:
+        available = list(cfg.data.get('providers', {}).keys())
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider '{provider_name}' not configured. Available providers: {available}"
+        )
+
+    # Create provider
+    try:
+        provider = ProviderRegistry.get_provider(provider_name, provider_config)
+        g_data.get_or_create(cache_key, lambda: provider)
+        logging.info(f"Initialized provider: {provider_name}")
+        return provider
+    except Exception as e:
+        logging.error(f"Failed to initialize provider '{provider_name}': {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to initialize provider '{provider_name}': {str(e)}"
+        )
+
+
 def convert_to_provider_messages(messages: List[OllamaMessage]) -> List[Message]:
     """Convert Ollama messages to provider format."""
     return [
@@ -192,12 +263,17 @@ async def build_enhanced_context(
 @app.post("/v1/chat/completions")
 async def chat(request: OllamaChatRequest):
     """Chat completion endpoint (Ollama-compatible)."""
-    provider = g_data.get("ai_provider")
-    if not provider:
-        raise HTTPException(status_code=503, detail="AI provider not initialized")
-
     try:
         start_time = time.time()
+
+        # Parse model string to get provider and model name
+        try:
+            provider_name, model_name = parse_model_string(request.model)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Get or create provider
+        provider = get_or_create_provider(provider_name)
 
         # Get user/conversation IDs
         user_id = request.user_id or "anonymous"
@@ -215,10 +291,10 @@ async def chat(request: OllamaChatRequest):
 
         # Handle streaming
         if request.stream:
-            return await handle_streaming_chat(provider, request.model, enhanced_messages, tools)
+            return await handle_streaming_chat(provider, model_name, enhanced_messages, tools, request.model)
 
         # Non-streaming response
-        response = await provider.chat(enhanced_messages, tools, model=request.model)
+        response = await provider.chat(enhanced_messages, tools, model=model_name)
         duration = int((time.time() - start_time) * 1000000000)
 
         return OllamaChatResponse(
@@ -233,17 +309,19 @@ async def chat(request: OllamaChatRequest):
             total_duration=duration
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def handle_streaming_chat(provider, model: str, messages: List[Message], tools: Optional[List[Dict]]):
+async def handle_streaming_chat(provider, model: str, messages: List[Message], tools: Optional[List[Dict]], full_model: str):
     """Handle streaming chat response."""
     async def generate_stream():
         async for chunk in provider.chat_stream(messages, tools, model=model):
             response_chunk = {
-                "model": model,
+                "model": full_model,
                 "created_at": datetime.utcnow().isoformat() + "Z",
                 "message": {"role": "assistant", "content": chunk},
                 "done": False
@@ -252,7 +330,7 @@ async def handle_streaming_chat(provider, model: str, messages: List[Message], t
 
         # Final chunk
         final = {
-            "model": model,
+            "model": full_model,
             "created_at": datetime.utcnow().isoformat() + "Z",
             "message": {"role": "assistant", "content": ""},
             "done": True
@@ -289,23 +367,41 @@ async def generate(request: OllamaGenerateRequest):
 @app.get("/api/tags")
 async def list_tags():
     """List available models (Ollama-compatible)."""
-    provider = g_data.get("ai_provider")
-    if not provider:
-        raise HTTPException(status_code=503, detail="AI provider not initialized")
+    from lib.ai_providers import ProviderRegistry
 
     try:
-        models = provider.list_models()
-        return OllamaTagsResponse(
-            models=[
-                {
-                    "name": model,
-                    "modified_at": datetime.utcnow().isoformat() + "Z",
-                    "size": 0,
-                    "digest": "",
-                }
-                for model in models
-            ]
-        )
+        cfg = g_data.get("cfg")
+        if not cfg:
+            raise HTTPException(status_code=503, detail="Configuration not loaded")
+
+        # Get all configured providers
+        providers_config = cfg.data.get('providers', {})
+        all_models = []
+
+        for provider_name, provider_config in providers_config.items():
+            try:
+                # Try to get or create provider
+                provider = get_or_create_provider(provider_name)
+                models = provider.list_models()
+
+                # Prefix models with provider name
+                for model in models:
+                    all_models.append({
+                        "name": f"{provider_name}/{model}",
+                        "modified_at": datetime.utcnow().isoformat() + "Z",
+                        "size": 0,
+                        "digest": "",
+                        "details": {
+                            "provider": provider_name,
+                            "model": model
+                        }
+                    })
+            except Exception as e:
+                logging.warning(f"Could not list models for provider '{provider_name}': {e}")
+                continue
+
+        return OllamaTagsResponse(models=all_models)
+
     except Exception as e:
         logging.error(f"List models error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -315,25 +411,29 @@ async def list_tags():
 @app.get("/")
 async def version():
     """Get API version."""
+    cfg = g_data.get("cfg")
+    providers = list(cfg.data.get('providers', {}).keys()) if cfg else []
+
     return {
         "version": "2.0.0",
         "name": "Personality Proxy API",
         "ollama_compatible": True,
-        "provider": g_data.get("ai_provider_name", "unknown"),
-        "features": ["personality", "memory", "tools"]
+        "model_format": "<provider>/<model>",
+        "available_providers": providers,
+        "features": ["personality", "memory", "tools", "multi-provider"]
     }
 
 
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    provider = g_data.get("ai_provider")
+    cfg = g_data.get("cfg")
     memory_db = g_data.get("memory_db")
+    providers = list(cfg.data.get('providers', {}).keys()) if cfg else []
 
     return {
         "status": "healthy",
-        "provider": g_data.get("ai_provider_name", "unknown"),
-        "provider_available": provider is not None,
+        "available_providers": providers,
         "memory_db_available": memory_db is not None,
         "memory_entries": memory_db.get_total_entries() if memory_db else 0
     }

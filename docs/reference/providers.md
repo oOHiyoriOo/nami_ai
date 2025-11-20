@@ -1,6 +1,15 @@
 # AI Providers Guide
 
-The Personality Proxy supports multiple AI backends through a pluggable provider system. Switch between Ollama, OpenAI, Anthropic, or create your own custom provider.
+The Personality Proxy supports multiple AI backends through a pluggable provider system. Use Ollama, OpenAI, GitHub Copilot, Anthropic, or create your own custom provider.
+
+## Model Format
+
+Models are specified in the format `<provider>/<model>`:
+- `ollama/llama2` - Use Llama 2 via Ollama
+- `copilot/gpt-4.1` - Use GPT-4.1 via GitHub Copilot
+- `openai/gpt-4` - Use GPT-4 via OpenAI
+
+This format allows you to use multiple providers in the same session without switching configuration.
 
 ## Available Providers
 
@@ -8,6 +17,7 @@ The Personality Proxy supports multiple AI backends through a pluggable provider
 |----------|--------|----------|----------|
 | **Ollama** | ✅ Built-in | Local Ollama | Privacy, offline, free |
 | **OpenAI** | ✅ Built-in | API key | GPT-4, hosted |
+| **Copilot** | ✅ Built-in | GitHub Copilot, copilot-api | GPT-4 via Copilot subscription |
 | **Anthropic** | 📝 Template | API key | Claude, hosted |
 | **Custom** | 📝 DIY | Your code | Any API |
 
@@ -31,14 +41,29 @@ ollama serve
 ### Configuration
 
 ```yaml
-ai_provider: ollama
+default_system_prompt: nami  # Default personality for all providers
 
 providers:
   ollama:
     url: http://localhost:11434
-    model: llama2
-    system_prompt: nami
     max_tool_calls: 3
+```
+
+### Usage
+
+Use models with the `ollama/` prefix:
+- `ollama/llama2`
+- `ollama/mistral`
+- `ollama/deepseek-r1:70b`
+
+Example API request:
+```bash
+curl -X POST http://localhost:11434/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "ollama/llama2",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
 ```
 
 ### Benefits
@@ -69,14 +94,30 @@ pip install openai
 ### Configuration
 
 ```yaml
-ai_provider: openai
+default_system_prompt: nami  # Default personality
 
 providers:
   openai:
     api_key: sk-your-api-key-here
-    model: gpt-4
-    system_prompt: nami
     organization: org-your-org-id  # Optional
+```
+
+### Usage
+
+Use models with the `openai/` prefix:
+- `openai/gpt-4`
+- `openai/gpt-4-turbo`
+- `openai/gpt-4o`
+- `openai/gpt-3.5-turbo`
+
+Example API request:
+```bash
+curl -X POST http://localhost:11434/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openai/gpt-4",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
 ```
 
 ### Available Models
@@ -104,6 +145,99 @@ providers:
 
 See [OpenAI Pricing](https://openai.com/pricing) for current rates.
 
+## Using GitHub Copilot
+
+Access GPT-4 and other OpenAI models using your existing GitHub Copilot subscription via the copilot-api proxy.
+
+### Prerequisites
+
+1. **GitHub Copilot Subscription** - You need an active GitHub Copilot subscription (individual, business, or enterprise)
+2. **copilot-api Server** - Running in a separate container/service (see [copilot-api](https://github.com/ericc-ch/copilot-api))
+3. **Python OpenAI library** - Install with `pip install openai`
+
+### Setup
+
+The copilot-api proxy server runs separately (typically in a Docker container). This proxy provides an OpenAI-compatible API that uses your GitHub Copilot subscription.
+
+#### Install Python Dependencies
+
+```bash
+# The Copilot provider uses the OpenAI library
+pip install openai
+```
+
+### Configuration
+
+Add to your `config.yml`:
+
+```yaml
+default_system_prompt: nami  # Default personality
+
+providers:
+  copilot:
+    url: http://localhost:4141  # copilot-api server URL
+    api_key: dummy              # copilot-api uses dummy auth
+```
+
+### Usage
+
+Use models with the `copilot/` prefix:
+- `copilot/gpt-4.1` - Latest GPT-4 (recommended)
+- `copilot/gpt-4o` - GPT-4 optimized
+- `copilot/gpt-4-turbo` - GPT-4 Turbo
+- `copilot/gpt-3.5-turbo` - GPT-3.5 Turbo
+
+Example API request:
+```bash
+curl -X POST http://localhost:11434/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "copilot/gpt-4.1",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+### Available Models
+
+The copilot-api proxy provides access to these models through your Copilot subscription:
+
+- `gpt-4.1` - Latest GPT-4 model (recommended)
+- `gpt-4o` - GPT-4 optimized
+- `gpt-4-turbo` - GPT-4 Turbo
+- `gpt-3.5-turbo` - GPT-3.5 Turbo (faster, lower quality)
+
+### Benefits
+
+- ✅ **Cost effective** - Use existing Copilot subscription
+- ✅ **High quality** - Access to GPT-4 models
+- ✅ **No additional API costs** - Included with Copilot
+- ✅ **Tool support** - Full function calling
+- ✅ **Streaming support** - Real-time responses
+
+### Limitations
+
+- ❌ **Requires active subscription** - GitHub Copilot subscription needed
+- ❌ **Requires internet** - Proxy connects to GitHub
+- ❌ **Requires proxy server** - Must run copilot-api
+- ❌ **Rate limits** - Subject to GitHub Copilot usage limits
+
+### Troubleshooting
+
+**Connection refused:**
+- Verify the copilot-api server is running in its container
+- Check the URL in your config matches the server URL
+- Ensure network connectivity between containers
+
+**Models not available:**
+- Ensure you're using a supported model name (gpt-4.1, gpt-4o, etc.)
+- Check that the copilot-api server is properly authenticated
+- Some models may not be available with all Copilot subscription types
+
+### Links
+
+- [copilot-api GitHub Repository](https://github.com/ericc-ch/copilot-api)
+- [copilot-api Documentation](https://github.com/ericc-ch/copilot-api#readme)
+
 ## Using Anthropic Claude (Template)
 
 ### Setup
@@ -118,14 +252,19 @@ pip install anthropic
 ### Configuration
 
 ```yaml
-ai_provider: anthropic
+default_system_prompt: nami  # Default personality
 
 providers:
   anthropic:
     api_key: sk-ant-your-api-key
-    model: claude-3-opus-20240229
-    system_prompt: nami
 ```
+
+### Usage
+
+Use models with the `anthropic/` prefix:
+- `anthropic/claude-3-opus-20240229`
+- `anthropic/claude-3-sonnet-20240229`
+- `anthropic/claude-3-haiku-20240307`
 
 **Note:** The Anthropic provider is a template. You'll need to implement it following the pattern in `lib/ai_providers/openai_provider.py`.
 
@@ -229,14 +368,12 @@ ProviderRegistry.register_provider("my_provider", MyProvider)
 Add to `config.yml`:
 
 ```yaml
-ai_provider: my_provider
+default_system_prompt: nami  # Default personality
 
 providers:
   my_provider:
     api_key: your-api-key
     url: https://api.example.com
-    model: model-1
-    system_prompt: nami
 ```
 
 ### 4. Test
@@ -256,6 +393,7 @@ That's it! Your custom provider is now integrated.
 | Ollama | Free | 10 min | Good |
 | OpenAI GPT-4 | $0.03/1K tokens | 2 min | Excellent |
 | OpenAI GPT-3.5 | $0.001/1K tokens | 2 min | Good |
+| Copilot | Included w/ subscription | 5-10 min | Excellent |
 | Anthropic Claude | $0.015/1K tokens | 2 min | Excellent |
 | Custom | Varies | 1-4 hours | Varies |
 
@@ -265,47 +403,61 @@ That's it! Your custom provider is now integrated.
 |----------|---------|------------|-------------|
 | Ollama (local) | Low (50-500ms) | High | Very High |
 | OpenAI | Medium (500-2000ms) | Medium | High |
+| Copilot | Medium (500-2000ms) | Medium | High |
 | Anthropic | Medium (500-2000ms) | Medium | High |
 | Custom | Varies | Varies | Varies |
 
 ### Feature Comparison
 
-| Feature | Ollama | OpenAI | Anthropic | Custom |
-|---------|--------|--------|-----------|--------|
-| **Tool Calling** | ✅ | ✅ | ✅ | Depends |
-| **Streaming** | ✅ | ✅ | ✅ | Depends |
-| **Local** | ✅ | ❌ | ❌ | Depends |
-| **Free** | ✅ | ❌ | ❌ | Depends |
-| **Privacy** | ✅ | ❌ | ❌ | Depends |
-| **Quality** | Good | Excellent | Excellent | Varies |
+| Feature | Ollama | OpenAI | Copilot | Anthropic | Custom |
+|---------|--------|--------|---------|-----------|--------|
+| **Tool Calling** | ✅ | ✅ | ✅ | ✅ | Depends |
+| **Streaming** | ✅ | ✅ | ✅ | ✅ | Depends |
+| **Local** | ✅ | ❌ | ❌ | ❌ | Depends |
+| **Free** | ✅ | ❌ | w/ subscription | ❌ | Depends |
+| **Privacy** | ✅ | ❌ | ❌ | ❌ | Depends |
+| **Quality** | Good | Excellent | Excellent | Excellent | Varies |
 
 ## Switching Providers
 
-### At Runtime (Config Change)
+With the `<provider>/<model>` format, you can switch providers on a per-request basis without restarting the server.
 
-1. Edit `config.yml`:
-```yaml
-ai_provider: openai  # Change from ollama to openai
-```
+### Example: Using Multiple Providers
 
-2. Restart server:
 ```bash
-python api_server.py
+# Use Ollama for one request
+curl -X POST http://localhost:11434/api/chat \
+  -d '{"model": "ollama/llama2", "messages": [...]}'
+
+# Use Copilot for the next request
+curl -X POST http://localhost:11434/api/chat \
+  -d '{"model": "copilot/gpt-4.1", "messages": [...]}'
+
+# Use OpenAI for another request
+curl -X POST http://localhost:11434/api/chat \
+  -d '{"model": "openai/gpt-4", "messages": [...]}'
 ```
 
-### Programmatically
+### List Available Models
 
-```python
-from lib.ai_providers import ProviderRegistry
+Get all available models across all providers:
 
-# Get a provider
-provider = ProviderRegistry.get_provider(
-    "ollama",
-    {"url": "http://localhost:11434", "model": "llama2"}
-)
+```bash
+curl http://localhost:11434/api/tags
+```
 
-# Use it
-response = await provider.chat(messages=[...])
+This will return models in the format `provider/model`:
+```json
+{
+  "models": [
+    {"name": "ollama/llama2"},
+    {"name": "ollama/mistral"},
+    {"name": "copilot/gpt-4.1"},
+    {"name": "copilot/gpt-4o"},
+    {"name": "openai/gpt-4"},
+    {"name": "openai/gpt-3.5-turbo"}
+  ]
+}
 ```
 
 ## Best Practices

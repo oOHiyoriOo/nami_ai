@@ -3,32 +3,31 @@ api:
   host: "0.0.0.0"
   port: 11434  # Default Ollama port for compatibility
 
-# AI Provider selection - choose which backend to use
-ai_provider: ollama  # Options: ollama, openai, anthropic (when implemented)
+# Default system prompt (personality)
+default_system_prompt: nami  # File in system_prompt/ directory
 
 # AI Provider configurations
+# Use models with format: <provider>/<model> (e.g., ollama/llama2, copilot/gpt-4.1)
 providers:
   # Ollama provider configuration
   ollama:
     url: http://192.168.188.178:11434
-    model: deepseek-r1:70b-llama-distill-q4_K_M-tools
-    system_prompt: nami  # File in system_prompt/ directory
     max_tool_calls: 3
 
   # OpenAI provider configuration (requires: pip install openai)
-  # Uncomment to use OpenAI instead of Ollama
   # openai:
   #   api_key: YOUR_OPENAI_API_KEY
-  #   model: gpt-4
-  #   system_prompt: nami
   #   organization: YOUR_ORG_ID  # optional
 
+  # GitHub Copilot provider configuration (requires: pip install openai)
+  # Requires copilot-api server running separately (https://github.com/ericc-ch/copilot-api)
+  # copilot:
+  #   url: http://copilot-api:4141  # copilot-api server URL (container name or host)
+  #   api_key: dummy                 # copilot-api uses dummy auth
+
   # Anthropic provider configuration (requires: pip install anthropic)
-  # Uncomment to use Anthropic instead
   # anthropic:
   #   api_key: YOUR_ANTHROPIC_API_KEY
-  #   model: claude-3-opus-20240229
-  #   system_prompt: nami
 
 # Bot settings
 bot:
