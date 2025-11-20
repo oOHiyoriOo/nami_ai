@@ -152,69 +152,14 @@ Access GPT-4 and other OpenAI models using your existing GitHub Copilot subscrip
 ### Prerequisites
 
 1. **GitHub Copilot Subscription** - You need an active GitHub Copilot subscription (individual, business, or enterprise)
-2. **Node.js or Bun** - To run the copilot-api proxy server
+2. **copilot-api Server** - Running in a separate container/service (see [copilot-api](https://github.com/ericc-ch/copilot-api))
+3. **Python OpenAI library** - Install with `pip install openai`
 
 ### Setup
 
-#### Step 1: Initialize the copilot-api submodule
+The copilot-api proxy server runs separately (typically in a Docker container). This proxy provides an OpenAI-compatible API that uses your GitHub Copilot subscription.
 
-The copilot-api proxy is included as a git submodule:
-
-```bash
-# Initialize and update the submodule
-git submodule update --init --recursive
-```
-
-#### Step 2: Install copilot-api dependencies
-
-**Option A: Using Bun (recommended)**
-
-```bash
-# Install Bun if not already installed
-curl -fsSL https://bun.sh/install | bash
-
-# Navigate to the copilot-api directory
-cd external/copilot-api
-
-# Install dependencies
-bun install
-```
-
-**Option B: Using npx**
-
-No installation needed - npx will download and run copilot-api automatically.
-
-#### Step 3: Start the copilot-api proxy server
-
-**Option A: Using the startup script (recommended)**
-
-```bash
-# From the project root
-./scripts/start_copilot_api.sh
-
-# Or with options
-./scripts/start_copilot_api.sh --port 4141 --verbose
-```
-
-**Option B: Manually using Bun**
-
-```bash
-cd external/copilot-api
-bun run start
-```
-
-**Option C: Using npx**
-
-```bash
-npx copilot-api@latest start
-```
-
-The first time you run the server, it will guide you through GitHub authentication:
-1. Open the provided URL in your browser
-2. Enter the device code shown
-3. Authorize the application
-
-#### Step 4: Install Python dependencies
+#### Install Python Dependencies
 
 ```bash
 # The Copilot provider uses the OpenAI library
@@ -276,86 +221,17 @@ The copilot-api proxy provides access to these models through your Copilot subsc
 - ❌ **Requires proxy server** - Must run copilot-api
 - ❌ **Rate limits** - Subject to GitHub Copilot usage limits
 
-### Usage Tips
-
-To avoid hitting GitHub Copilot's rate limits, you can:
-
-1. **Manual approval** - Enable manual approval for each request:
-   ```bash
-   ./scripts/start_copilot_api.sh --manual
-   ```
-
-2. **Rate limiting** - Set a minimum time between requests:
-   ```bash
-   ./scripts/start_copilot_api.sh --rate-limit 30
-   ```
-
-3. **Wait on limit** - Wait instead of erroring when rate limited:
-   ```bash
-   ./scripts/start_copilot_api.sh --rate-limit 30 --wait
-   ```
-
 ### Troubleshooting
 
-**Copilot-api not running:**
-```bash
-# Check if the server is running
-curl http://localhost:4141/v1/models
-
-# Start the server
-./scripts/start_copilot_api.sh
-```
-
-**Authentication failed:**
-- Re-run the authentication flow: `npx copilot-api@latest auth`
-- Ensure your GitHub Copilot subscription is active
-- Check you're using the correct account type (individual/business/enterprise)
-
 **Connection refused:**
-- Verify the proxy server is running
-- Check the URL in your config matches the server (default: http://localhost:4141)
-- Ensure no firewall is blocking port 4141
+- Verify the copilot-api server is running in its container
+- Check the URL in your config matches the server URL
+- Ensure network connectivity between containers
 
 **Models not available:**
 - Ensure you're using a supported model name (gpt-4.1, gpt-4o, etc.)
+- Check that the copilot-api server is properly authenticated
 - Some models may not be available with all Copilot subscription types
-
-### Advanced Configuration
-
-**Using with Business/Enterprise Copilot:**
-
-```bash
-# For business accounts
-./scripts/start_copilot_api.sh --account-type business
-
-# For enterprise accounts
-./scripts/start_copilot_api.sh --account-type enterprise
-```
-
-**Using Docker:**
-
-```bash
-cd external/copilot-api
-
-# Build the Docker image
-docker build -t copilot-api .
-
-# Run with persistent storage
-mkdir -p ./copilot-data
-docker run -p 4141:4141 -v $(pwd)/copilot-data:/root/.local/share/copilot-api copilot-api
-```
-
-**Environment Variables:**
-
-You can set these environment variables to configure the startup script:
-
-```bash
-export COPILOT_PORT=4141
-export COPILOT_VERBOSE=true
-export COPILOT_ACCOUNT_TYPE=individual
-
-./scripts/start_copilot_api.sh
-```
 
 ### Links
 
