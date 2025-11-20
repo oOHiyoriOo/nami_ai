@@ -8,6 +8,7 @@ The Personality Proxy supports multiple AI backends through a pluggable provider
 |----------|--------|----------|----------|
 | **Ollama** | ✅ Built-in | Local Ollama | Privacy, offline, free |
 | **OpenAI** | ✅ Built-in | API key | GPT-4, hosted |
+| **Copilot** | ✅ Built-in | GitHub Copilot, copilot-api | GPT-4 via Copilot subscription |
 | **Anthropic** | 📝 Template | API key | Claude, hosted |
 | **Custom** | 📝 DIY | Your code | Any API |
 
@@ -103,6 +104,207 @@ providers:
 ### Pricing
 
 See [OpenAI Pricing](https://openai.com/pricing) for current rates.
+
+## Using GitHub Copilot
+
+Access GPT-4 and other OpenAI models using your existing GitHub Copilot subscription via the copilot-api proxy.
+
+### Prerequisites
+
+1. **GitHub Copilot Subscription** - You need an active GitHub Copilot subscription (individual, business, or enterprise)
+2. **Node.js or Bun** - To run the copilot-api proxy server
+
+### Setup
+
+#### Step 1: Initialize the copilot-api submodule
+
+The copilot-api proxy is included as a git submodule:
+
+```bash
+# Initialize and update the submodule
+git submodule update --init --recursive
+```
+
+#### Step 2: Install copilot-api dependencies
+
+**Option A: Using Bun (recommended)**
+
+```bash
+# Install Bun if not already installed
+curl -fsSL https://bun.sh/install | bash
+
+# Navigate to the copilot-api directory
+cd external/copilot-api
+
+# Install dependencies
+bun install
+```
+
+**Option B: Using npx**
+
+No installation needed - npx will download and run copilot-api automatically.
+
+#### Step 3: Start the copilot-api proxy server
+
+**Option A: Using the startup script (recommended)**
+
+```bash
+# From the project root
+./scripts/start_copilot_api.sh
+
+# Or with options
+./scripts/start_copilot_api.sh --port 4141 --verbose
+```
+
+**Option B: Manually using Bun**
+
+```bash
+cd external/copilot-api
+bun run start
+```
+
+**Option C: Using npx**
+
+```bash
+npx copilot-api@latest start
+```
+
+The first time you run the server, it will guide you through GitHub authentication:
+1. Open the provided URL in your browser
+2. Enter the device code shown
+3. Authorize the application
+
+#### Step 4: Install Python dependencies
+
+```bash
+# The Copilot provider uses the OpenAI library
+pip install openai
+```
+
+### Configuration
+
+Add to your `config.yml`:
+
+```yaml
+ai_provider: copilot
+
+providers:
+  copilot:
+    url: http://localhost:4141  # copilot-api server URL
+    model: gpt-4.1              # or gpt-4o, gpt-4-turbo, gpt-3.5-turbo
+    api_key: dummy              # copilot-api uses dummy auth
+    system_prompt: nami
+```
+
+### Available Models
+
+The copilot-api proxy provides access to these models through your Copilot subscription:
+
+- `gpt-4.1` - Latest GPT-4 model (recommended)
+- `gpt-4o` - GPT-4 optimized
+- `gpt-4-turbo` - GPT-4 Turbo
+- `gpt-3.5-turbo` - GPT-3.5 Turbo (faster, lower quality)
+
+### Benefits
+
+- ✅ **Cost effective** - Use existing Copilot subscription
+- ✅ **High quality** - Access to GPT-4 models
+- ✅ **No additional API costs** - Included with Copilot
+- ✅ **Tool support** - Full function calling
+- ✅ **Streaming support** - Real-time responses
+
+### Limitations
+
+- ❌ **Requires active subscription** - GitHub Copilot subscription needed
+- ❌ **Requires internet** - Proxy connects to GitHub
+- ❌ **Requires proxy server** - Must run copilot-api
+- ❌ **Rate limits** - Subject to GitHub Copilot usage limits
+
+### Usage Tips
+
+To avoid hitting GitHub Copilot's rate limits, you can:
+
+1. **Manual approval** - Enable manual approval for each request:
+   ```bash
+   ./scripts/start_copilot_api.sh --manual
+   ```
+
+2. **Rate limiting** - Set a minimum time between requests:
+   ```bash
+   ./scripts/start_copilot_api.sh --rate-limit 30
+   ```
+
+3. **Wait on limit** - Wait instead of erroring when rate limited:
+   ```bash
+   ./scripts/start_copilot_api.sh --rate-limit 30 --wait
+   ```
+
+### Troubleshooting
+
+**Copilot-api not running:**
+```bash
+# Check if the server is running
+curl http://localhost:4141/v1/models
+
+# Start the server
+./scripts/start_copilot_api.sh
+```
+
+**Authentication failed:**
+- Re-run the authentication flow: `npx copilot-api@latest auth`
+- Ensure your GitHub Copilot subscription is active
+- Check you're using the correct account type (individual/business/enterprise)
+
+**Connection refused:**
+- Verify the proxy server is running
+- Check the URL in your config matches the server (default: http://localhost:4141)
+- Ensure no firewall is blocking port 4141
+
+**Models not available:**
+- Ensure you're using a supported model name (gpt-4.1, gpt-4o, etc.)
+- Some models may not be available with all Copilot subscription types
+
+### Advanced Configuration
+
+**Using with Business/Enterprise Copilot:**
+
+```bash
+# For business accounts
+./scripts/start_copilot_api.sh --account-type business
+
+# For enterprise accounts
+./scripts/start_copilot_api.sh --account-type enterprise
+```
+
+**Using Docker:**
+
+```bash
+cd external/copilot-api
+
+# Build the Docker image
+docker build -t copilot-api .
+
+# Run with persistent storage
+mkdir -p ./copilot-data
+docker run -p 4141:4141 -v $(pwd)/copilot-data:/root/.local/share/copilot-api copilot-api
+```
+
+**Environment Variables:**
+
+You can set these environment variables to configure the startup script:
+
+```bash
+export COPILOT_PORT=4141
+export COPILOT_VERBOSE=true
+export COPILOT_ACCOUNT_TYPE=individual
+
+./scripts/start_copilot_api.sh
+```
+
+### Links
+
+- [copilot-api GitHub Repository](https://github.com/ericc-ch/copilot-api)
+- [copilot-api Documentation](https://github.com/ericc-ch/copilot-api#readme)
 
 ## Using Anthropic Claude (Template)
 
@@ -256,6 +458,7 @@ That's it! Your custom provider is now integrated.
 | Ollama | Free | 10 min | Good |
 | OpenAI GPT-4 | $0.03/1K tokens | 2 min | Excellent |
 | OpenAI GPT-3.5 | $0.001/1K tokens | 2 min | Good |
+| Copilot | Included w/ subscription | 5-10 min | Excellent |
 | Anthropic Claude | $0.015/1K tokens | 2 min | Excellent |
 | Custom | Varies | 1-4 hours | Varies |
 
@@ -265,19 +468,20 @@ That's it! Your custom provider is now integrated.
 |----------|---------|------------|-------------|
 | Ollama (local) | Low (50-500ms) | High | Very High |
 | OpenAI | Medium (500-2000ms) | Medium | High |
+| Copilot | Medium (500-2000ms) | Medium | High |
 | Anthropic | Medium (500-2000ms) | Medium | High |
 | Custom | Varies | Varies | Varies |
 
 ### Feature Comparison
 
-| Feature | Ollama | OpenAI | Anthropic | Custom |
-|---------|--------|--------|-----------|--------|
-| **Tool Calling** | ✅ | ✅ | ✅ | Depends |
-| **Streaming** | ✅ | ✅ | ✅ | Depends |
-| **Local** | ✅ | ❌ | ❌ | Depends |
-| **Free** | ✅ | ❌ | ❌ | Depends |
-| **Privacy** | ✅ | ❌ | ❌ | Depends |
-| **Quality** | Good | Excellent | Excellent | Varies |
+| Feature | Ollama | OpenAI | Copilot | Anthropic | Custom |
+|---------|--------|--------|---------|-----------|--------|
+| **Tool Calling** | ✅ | ✅ | ✅ | ✅ | Depends |
+| **Streaming** | ✅ | ✅ | ✅ | ✅ | Depends |
+| **Local** | ✅ | ❌ | ❌ | ❌ | Depends |
+| **Free** | ✅ | ❌ | w/ subscription | ❌ | Depends |
+| **Privacy** | ✅ | ❌ | ❌ | ❌ | Depends |
+| **Quality** | Good | Excellent | Excellent | Excellent | Varies |
 
 ## Switching Providers
 

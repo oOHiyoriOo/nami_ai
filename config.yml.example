@@ -4,7 +4,7 @@ api:
   port: 11434  # Default Ollama port for compatibility
 
 # AI Provider selection - choose which backend to use
-ai_provider: ollama  # Options: ollama, openai, anthropic (when implemented)
+ai_provider: ollama  # Options: ollama, openai, copilot, anthropic (when implemented)
 
 # AI Provider configurations
 providers:
@@ -22,6 +22,15 @@ providers:
   #   model: gpt-4
   #   system_prompt: nami
   #   organization: YOUR_ORG_ID  # optional
+
+  # GitHub Copilot provider configuration (requires: pip install openai, and running copilot-api)
+  # See external/copilot-api/README.md for setup instructions
+  # Uncomment to use GitHub Copilot instead
+  # copilot:
+  #   url: http://localhost:4141  # copilot-api server URL
+  #   model: gpt-4.1              # gpt-4.1, gpt-4o, gpt-4-turbo, gpt-3.5-turbo
+  #   api_key: dummy              # copilot-api uses dummy auth
+  #   system_prompt: nami
 
   # Anthropic provider configuration (requires: pip install anthropic)
   # Uncomment to use Anthropic instead

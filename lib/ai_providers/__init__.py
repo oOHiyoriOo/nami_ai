@@ -96,6 +96,13 @@ def _register_optional_providers():
     except ImportError:
         logging.debug("Anthropic provider not available")
 
+    # Try to import Copilot provider
+    try:
+        from .copilot_provider import CopilotProvider
+        ProviderRegistry.register_provider("copilot", CopilotProvider)
+    except ImportError:
+        logging.debug("Copilot provider not available (missing openai package)")
+
 
 # Auto-register optional providers on import
 _register_optional_providers()
