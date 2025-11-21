@@ -72,6 +72,9 @@ class OllamaChatResponse(BaseModel):
     message: OllamaMessage
     done: bool
     total_duration: Optional[int] = None
+    # Personality proxy extensions
+    conversation_id: Optional[str] = Field(None, description="Conversation ID for tracking")
+    user_id: Optional[str] = Field(None, description="User ID for tracking")
 
 
 class OllamaGenerateRequest(BaseModel):
@@ -229,6 +232,7 @@ def get_default_tools() -> Optional[List[Dict]]:
 async def build_enhanced_context(
     messages: List[OllamaMessage],
     user_id: str,
+    conversation_id: Optional[str],
     enable_memory: bool,
     enable_personality: bool
 ) -> List[Message]:
@@ -242,6 +246,7 @@ async def build_enhanced_context(
     enhanced = await context_builder.build_context(
         messages=dict_messages,
         user_id=user_id,
+        conversation_id=conversation_id,
         enable_personality=enable_personality,
         enable_memory=enable_memory
     )
@@ -278,10 +283,17 @@ async def chat(request: OllamaChatRequest):
         # Get user/conversation IDs
         user_id = request.user_id or "anonymous"
 
+        # Generate conversation_id if not provided
+        import uuid
+        conversation_id = request.conversation_id or f"conv_{uuid.uuid4().hex[:16]}"
+
+        logging.debug(f"Chat request - user_id: {user_id}, conversation_id: {conversation_id}")
+
         # Build enhanced context
         enhanced_messages = await build_enhanced_context(
             request.messages,
             user_id,
+            conversation_id,
             request.enable_memory,
             request.enable_personality
         )
@@ -291,11 +303,19 @@ async def chat(request: OllamaChatRequest):
 
         # Handle streaming
         if request.stream:
-            return await handle_streaming_chat(provider, model_name, enhanced_messages, tools, request.model)
+            return await handle_streaming_chat(
+                provider, model_name, enhanced_messages, tools,
+                request.model, user_id, conversation_id
+            )
 
         # Non-streaming response
         response = await provider.chat(enhanced_messages, tools, model=model_name)
         duration = int((time.time() - start_time) * 1000000000)
+
+        # Record successful model usage
+        model_cache = g_data.get("model_cache")
+        if model_cache:
+            model_cache.record_success(request.model)
 
         return OllamaChatResponse(
             model=request.model,
@@ -306,7 +326,9 @@ async def chat(request: OllamaChatRequest):
                 tool_calls=response.tool_calls
             ),
             done=True,
-            total_duration=duration
+            total_duration=duration,
+            conversation_id=conversation_id,
+            user_id=user_id
         )
 
     except HTTPException:
@@ -316,26 +338,50 @@ async def chat(request: OllamaChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def handle_streaming_chat(provider, model: str, messages: List[Message], tools: Optional[List[Dict]], full_model: str):
+async def handle_streaming_chat(
+    provider,
+    model: str,
+    messages: List[Message],
+    tools: Optional[List[Dict]],
+    full_model: str,
+    user_id: str,
+    conversation_id: str
+):
     """Handle streaming chat response."""
     async def generate_stream():
-        async for chunk in provider.chat_stream(messages, tools, model=model):
-            response_chunk = {
+        success = False
+        try:
+            async for chunk in provider.chat_stream(messages, tools, model=model):
+                success = True  # At least one chunk received
+                response_chunk = {
+                    "model": full_model,
+                    "created_at": datetime.utcnow().isoformat() + "Z",
+                    "message": {"role": "assistant", "content": chunk},
+                    "done": False,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id
+                }
+                yield f"{response_chunk}\n"
+
+            # Record successful streaming
+            if success:
+                model_cache = g_data.get("model_cache")
+                if model_cache:
+                    model_cache.record_success(full_model)
+
+            # Final chunk
+            final = {
                 "model": full_model,
                 "created_at": datetime.utcnow().isoformat() + "Z",
-                "message": {"role": "assistant", "content": chunk},
-                "done": False
+                "message": {"role": "assistant", "content": ""},
+                "done": True,
+                "conversation_id": conversation_id,
+                "user_id": user_id
             }
-            yield f"{response_chunk}\n"
-
-        # Final chunk
-        final = {
-            "model": full_model,
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "message": {"role": "assistant", "content": ""},
-            "done": True
-        }
-        yield f"{final}\n"
+            yield f"{final}\n"
+        except Exception as e:
+            logging.error(f"Streaming error: {e}", exc_info=True)
+            raise
 
     return StreamingResponse(generate_stream(), media_type="application/x-ndjson")
 
@@ -366,44 +412,51 @@ async def generate(request: OllamaGenerateRequest):
 
 @app.get("/api/tags")
 async def list_tags():
-    """List available models (Ollama-compatible)."""
-    from lib.ai_providers import ProviderRegistry
-
+    """List available models (Ollama-compatible) - returns cached successfully used models."""
     try:
         cfg = g_data.get("cfg")
         if not cfg:
             raise HTTPException(status_code=503, detail="Configuration not loaded")
 
-        # Get all configured providers
-        providers_config = cfg.data.get('providers', {})
-        all_models = []
+        model_cache = g_data.get("model_cache")
 
-        for provider_name, provider_config in providers_config.items():
-            try:
-                # Try to get or create provider
-                provider = get_or_create_provider(provider_name)
-                models = provider.list_models()
+        # Return cached models if available
+        if model_cache:
+            cached_models = model_cache.to_ollama_format()
+            if cached_models:
+                logging.debug(f"Returning {len(cached_models)} cached models")
+                return OllamaTagsResponse(models=cached_models)
+            else:
+                logging.info("No cached models yet, returning empty list")
+                return OllamaTagsResponse(models=[])
 
-                # Prefix models with provider name
-                for model in models:
-                    all_models.append({
-                        "name": f"{provider_name}/{model}",
-                        "modified_at": datetime.utcnow().isoformat() + "Z",
-                        "size": 0,
-                        "digest": "",
-                        "details": {
-                            "provider": provider_name,
-                            "model": model
-                        }
-                    })
-            except Exception as e:
-                logging.warning(f"Could not list models for provider '{provider_name}': {e}")
-                continue
-
-        return OllamaTagsResponse(models=all_models)
+        # Fallback: return empty list if cache not available
+        logging.warning("Model cache not available")
+        return OllamaTagsResponse(models=[])
 
     except Exception as e:
         logging.error(f"List models error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/models/stats")
+async def model_cache_stats():
+    """Get model cache statistics."""
+    try:
+        model_cache = g_data.get("model_cache")
+        if not model_cache:
+            raise HTTPException(status_code=503, detail="Model cache not available")
+
+        stats = model_cache.get_cache_stats()
+        return {
+            "status": "ok",
+            "cache": stats
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Cache stats error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -15,6 +15,7 @@ from lib.system_prompt_parser import NamiSystemPrompt
 from lib.ai_providers import ProviderRegistry
 from lib.services.memory_service import MemoryService
 from lib.services.context_builder import ContextBuilder
+from lib.services.model_cache import ModelCache
 
 
 class AppInitializer:
@@ -111,6 +112,10 @@ class AppInitializer:
         # Create context builder
         context_builder = ContextBuilder(sys_prompt_instance, memory_service)
         g_data.get_or_create("context_builder", lambda: context_builder)
+
+        # Create model cache
+        model_cache = ModelCache()
+        g_data.get_or_create("model_cache", lambda: model_cache)
 
         logging.info("Services initialized")
 

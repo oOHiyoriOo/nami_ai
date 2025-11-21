@@ -5,7 +5,8 @@ An **Ollama-compatible** personality proxy system with pluggable AI backends. Ad
 ## ✨ Features
 
 - 🔌 **Ollama-Compatible API** - Drop-in replacement for Ollama with personality enhancement
-- 🧠 **Multiple AI Backends** - Easily switch between Ollama, OpenAI, Anthropic, and more
+- 🧠 **Multiple AI Backends** - Easily switch between Ollama, OpenAI, GitHub Copilot, and more
+- 🎯 **Smart Model Caching** - Automatically tracks and returns successfully validated models
 - 💾 **Neo4j Memory System** - Long-term memory (episodic, knowledge, procedural)
 - 🎭 **Personality Management** - Markdown-based character definitions
 - 🛠️ **Tool Integration** - Web search, memory queries, and custom tools
@@ -31,8 +32,12 @@ python api_server.py
 **Use with any Ollama client:**
 
 ```bash
+# Use models with provider/model format
 export OLLAMA_HOST=http://localhost:11434
-ollama run llama2
+curl http://localhost:11434/api/chat -d '{
+  "model": "ollama/llama2",
+  "messages": [{"role": "user", "content": "Hello!"}]
+}'
 ```
 
 ```python
@@ -40,7 +45,7 @@ from ollama import Client
 
 client = Client(host='http://localhost:11434')
 response = client.chat(
-    model='llama2',
+    model='ollama/llama2',  # Format: provider/model
     messages=[{'role': 'user', 'content': 'Hello!'}],
     options={'user_id': 'alice', 'enable_memory': True}
 )
@@ -72,29 +77,31 @@ Client (Ollama-compatible) → Personality Proxy API
                                     └── Tools System
 ```
 
-## 🔌 Switching AI Providers
+## 🔌 Multi-Provider Support
 
-Change one line in `config.yml`:
+Use multiple AI providers in the same session with the `<provider>/<model>` format:
 
 ```yaml
-# Use Ollama (local, free)
-ai_provider: ollama
-
+# Configure multiple providers in config.yml
 providers:
   ollama:
     url: http://localhost:11434
-    model: llama2
-```
 
-```yaml
-# Use OpenAI (hosted, GPT-4)
-ai_provider: openai
+  copilot:
+    enabled: true
 
-providers:
   openai:
     api_key: sk-your-key
-    model: gpt-4
 ```
+
+```bash
+# Use different providers in the same session
+curl -X POST http://localhost:11434/api/chat -d '{"model": "ollama/llama2", ...}'
+curl -X POST http://localhost:11434/api/chat -d '{"model": "copilot/gpt-4.1", ...}'
+curl -X POST http://localhost:11434/api/chat -d '{"model": "openai/gpt-4", ...}'
+```
+
+**Smart Caching:** The API automatically tracks successfully used models. Use `GET /api/tags` to see which models have been validated and are ready to use.
 
 [**→ Providers Guide**](docs/reference/providers.md)
 
@@ -173,8 +180,11 @@ tool_definition = {
 |----------|-------------|
 | `POST /api/chat` | Chat completion (Ollama format) |
 | `POST /api/generate` | Text generation |
-| `GET /api/tags` | List available models |
+| `GET /api/tags` | List cached successfully used models |
+| `GET /api/models/stats` | Model cache statistics |
 | `GET /health` | Health check |
+
+**Model Format:** Use `<provider>/<model>` format (e.g., `ollama/llama2`, `copilot/gpt-4.1`)
 
 [**→ API Reference**](docs/reference/api.md)
 

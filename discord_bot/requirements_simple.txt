@@ -1,0 +1,13 @@
+# Simplified Discord Bot Dependencies
+# This bot only calls the Personality Proxy API - it doesn't need memory/database libraries
+
+# Discord
+discord.py>=2.3.0
+
+# API Client (for calling Personality Proxy API)
+ollama
+
+# Core utilities
+colorama>=0.4.6
+PyYAML>=6.0.1
+aiohttp

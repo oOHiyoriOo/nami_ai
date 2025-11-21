@@ -180,7 +180,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ### List Models
 
-Get available models from the current AI provider.
+Get cached successfully used models. The API tracks models that have been successfully used and returns them here.
 
 **GET** `/api/tags`
 
@@ -190,25 +190,74 @@ Get available models from the current AI provider.
 {
   "models": [
     {
-      "name": "llama2",
+      "name": "ollama/llama2",
       "modified_at": "2024-01-17T12:00:00Z",
       "size": 0,
-      "digest": ""
+      "digest": "",
+      "details": {
+        "provider": "ollama",
+        "model": "llama2",
+        "success_count": 15,
+        "first_used": "2024-01-17T10:00:00Z",
+        "last_used": "2024-01-17T12:00:00Z"
+      }
     },
     {
-      "name": "mistral",
-      "modified_at": "2024-01-17T12:00:00Z",
+      "name": "copilot/gpt-4.1",
+      "modified_at": "2024-01-17T11:30:00Z",
       "size": 0,
-      "digest": ""
+      "digest": "",
+      "details": {
+        "provider": "copilot",
+        "model": "gpt-4.1",
+        "success_count": 8,
+        "first_used": "2024-01-17T09:00:00Z",
+        "last_used": "2024-01-17T11:30:00Z"
+      }
     }
   ]
+}
+```
+
+**Model Format:** `<provider>/<model>` (e.g., `ollama/llama2`, `copilot/gpt-4.1`)
+
+**Note:** This endpoint returns only models that have been successfully used at least once. Initially it will return an empty list until models are used via the `/api/chat` endpoint.
+
+**Example:**
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+---
+
+### Model Cache Statistics
+
+Get statistics about cached models.
+
+**GET** `/api/models/stats`
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "cache": {
+    "total_models": 5,
+    "providers": ["ollama", "copilot", "openai"],
+    "total_successes": 127,
+    "most_used": {
+      "name": "ollama/llama2",
+      "count": 85
+    }
+  }
 }
 ```
 
 **Example:**
 
 ```bash
-curl http://localhost:11434/api/tags
+curl http://localhost:11434/api/models/stats
 ```
 
 ---

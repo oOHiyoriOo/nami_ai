@@ -45,6 +45,7 @@ class ContextBuilder:
         self,
         messages: List[dict],
         user_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
         enable_personality: bool = True,
         enable_memory: bool = True
     ) -> List[dict]:
@@ -54,6 +55,7 @@ class ContextBuilder:
         Args:
             messages: Original messages
             user_id: User identifier
+            conversation_id: Conversation identifier for scoping
             enable_personality: Include personality prompt
             enable_memory: Include memories
 
@@ -66,13 +68,13 @@ class ContextBuilder:
         if enable_personality:
             await self._add_personality(context)
 
-        # Add user context
-        if user_id:
-            self._add_user_context(context, user_id)
+        # Add user and conversation context
+        if user_id or conversation_id:
+            self._add_user_context(context, user_id, conversation_id)
 
-        # Add memories
+        # Add memories (scoped by user_id and conversation_id)
         if enable_memory and user_id and self.memory_service:
-            await self._add_memories(context, messages, user_id)
+            await self._add_memories(context, messages, user_id, conversation_id)
 
         # Add original messages
         context.add_original_messages(messages)
@@ -87,12 +89,21 @@ class ContextBuilder:
         except Exception as e:
             logging.error(f"Error loading personality prompt: {e}")
 
-    def _add_user_context(self, context: MessageContext, user_id: str):
-        """Add user context to messages."""
-        user_context = f"Context: You are talking to user ID '{user_id}'"
-        context.add_system_message(user_context)
+    def _add_user_context(self, context: MessageContext, user_id: Optional[str], conversation_id: Optional[str]):
+        """Add user and conversation context to messages."""
+        context_parts = []
 
-    async def _add_memories(self, context: MessageContext, messages: List[dict], user_id: str):
+        if user_id:
+            context_parts.append(f"user ID '{user_id}'")
+
+        if conversation_id:
+            context_parts.append(f"conversation '{conversation_id}'")
+
+        if context_parts:
+            user_context = f"Context: You are in {' and '.join(context_parts)}"
+            context.add_system_message(user_context)
+
+    async def _add_memories(self, context: MessageContext, messages: List[dict], user_id: str, conversation_id: Optional[str]):
         """Add relevant memories to context."""
         try:
             # Get last user message for memory search
@@ -105,6 +116,7 @@ class ContextBuilder:
                 return
 
             # Retrieve and format memories
+            # Note: Memory service could be enhanced to filter by conversation_id
             formatted_memories = await self.memory_service.get_formatted_memories(
                 query=last_user_msg,
                 user_id=user_id,
