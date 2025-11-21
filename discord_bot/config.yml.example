@@ -1,0 +1,43 @@
+# Discord Bot Configuration
+# This bot connects to the Personality Proxy API
+
+# Discord Bot Settings
+dc:
+  token: YOUR_DISCORD_BOT_TOKEN
+  sync_guild: -1  # -1 for global sync, or specific guild ID for faster testing
+
+# AI Channels - List of channel IDs where the bot will respond
+ai_channel:
+  - 1234567890  # Replace with your channel ID(s)
+
+# Personality Proxy API Settings
+# The bot uses the Ollama-compatible API endpoint
+ollama:
+  url: http://localhost:11434  # URL of your Personality Proxy API
+  system_prompt: nami  # System prompt file in system_prompt/ directory
+  model: ollama/llama2  # Model format: <provider>/<model>
+  max_tool_calls: 3
+
+# Neo4j Memory Database
+neo4j:
+  uri: bolt://localhost:7687
+  user: neo4j
+  pass: YOUR_NEO4J_PASSWORD
+
+# Memory Database Settings
+memory_db:
+  model: all-MiniLM-L6-v2  # Sentence transformer model for embeddings
+
+# Bot Settings
+bot:
+  brave_search_token: YOUR_BRAVE_API_KEY  # For web search tool
+  log_level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# ComfyUI Settings (for image generation tool)
+comfyui:
+  server: localhost:8188
+  workflow: lunarcherry.json
+  positive_node: '6'
+  negative_node: '7'
+  sampler_node: '3'
+  output: image_output

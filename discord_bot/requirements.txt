@@ -1,0 +1,28 @@
+# Discord Bot Dependencies
+discord.py>=2.3.0
+
+# Core Dependencies
+colorama>=0.4.6
+PyYAML>=6.0.1
+aiohttp
+aiofiles>=24.1.0
+aiosqlite>=0.20.0
+
+# LLM and AI (for Ollama API client)
+ollama
+langchain-community
+langchain
+langchain-ollama>=0.2.3
+sentence_transformers>=4.0.1
+
+# Database
+neo4j
+
+# Web and Data Processing (for tools)
+trafilatura
+lxml
+pandas>=2.1.4
+
+# Additional utilities
+tinydb
+googlesearch-python

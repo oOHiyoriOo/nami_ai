@@ -1,0 +1,5 @@
+{
+    "users": "id INTEGER PRIMARY KEY AUTOINCREMENT,discord_user_id INTEGER UNIQUE NOT NULL,name TEXT NOT NULL",
+    "channels": "id INTEGER PRIMARY KEY AUTOINCREMENT,discord_channel_id INTEGER UNIQUE NOT NULL,name TEXT NOT NULL",
+    "messages": "id INTEGER PRIMARY KEY AUTOINCREMENT,discord_message_id INTEGER UNIQUE,channel_id INTEGER NOT NULL,user_id INTEGER NOT NULL,conversation_id TEXT,content TEXT NOT NULL,timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,reply_to INTEGER,FOREIGN KEY (channel_id) REFERENCES channels(id),FOREIGN KEY (user_id) REFERENCES users(id),FOREIGN KEY (reply_to) REFERENCES messages(discord_message_id)"
+}
