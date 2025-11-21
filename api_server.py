@@ -72,6 +72,9 @@ class OllamaChatResponse(BaseModel):
     message: OllamaMessage
     done: bool
     total_duration: Optional[int] = None
+    # Personality proxy extensions
+    conversation_id: Optional[str] = Field(None, description="Conversation ID for tracking")
+    user_id: Optional[str] = Field(None, description="User ID for tracking")
 
 
 class OllamaGenerateRequest(BaseModel):
@@ -229,6 +232,7 @@ def get_default_tools() -> Optional[List[Dict]]:
 async def build_enhanced_context(
     messages: List[OllamaMessage],
     user_id: str,
+    conversation_id: Optional[str],
     enable_memory: bool,
     enable_personality: bool
 ) -> List[Message]:
@@ -242,6 +246,7 @@ async def build_enhanced_context(
     enhanced = await context_builder.build_context(
         messages=dict_messages,
         user_id=user_id,
+        conversation_id=conversation_id,
         enable_personality=enable_personality,
         enable_memory=enable_memory
     )
@@ -278,10 +283,17 @@ async def chat(request: OllamaChatRequest):
         # Get user/conversation IDs
         user_id = request.user_id or "anonymous"
 
+        # Generate conversation_id if not provided
+        import uuid
+        conversation_id = request.conversation_id or f"conv_{uuid.uuid4().hex[:16]}"
+
+        logging.debug(f"Chat request - user_id: {user_id}, conversation_id: {conversation_id}")
+
         # Build enhanced context
         enhanced_messages = await build_enhanced_context(
             request.messages,
             user_id,
+            conversation_id,
             request.enable_memory,
             request.enable_personality
         )
@@ -291,7 +303,10 @@ async def chat(request: OllamaChatRequest):
 
         # Handle streaming
         if request.stream:
-            return await handle_streaming_chat(provider, model_name, enhanced_messages, tools, request.model)
+            return await handle_streaming_chat(
+                provider, model_name, enhanced_messages, tools,
+                request.model, user_id, conversation_id
+            )
 
         # Non-streaming response
         response = await provider.chat(enhanced_messages, tools, model=model_name)
@@ -311,7 +326,9 @@ async def chat(request: OllamaChatRequest):
                 tool_calls=response.tool_calls
             ),
             done=True,
-            total_duration=duration
+            total_duration=duration,
+            conversation_id=conversation_id,
+            user_id=user_id
         )
 
     except HTTPException:
@@ -321,7 +338,15 @@ async def chat(request: OllamaChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def handle_streaming_chat(provider, model: str, messages: List[Message], tools: Optional[List[Dict]], full_model: str):
+async def handle_streaming_chat(
+    provider,
+    model: str,
+    messages: List[Message],
+    tools: Optional[List[Dict]],
+    full_model: str,
+    user_id: str,
+    conversation_id: str
+):
     """Handle streaming chat response."""
     async def generate_stream():
         success = False
@@ -332,7 +357,9 @@ async def handle_streaming_chat(provider, model: str, messages: List[Message], t
                     "model": full_model,
                     "created_at": datetime.utcnow().isoformat() + "Z",
                     "message": {"role": "assistant", "content": chunk},
-                    "done": False
+                    "done": False,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id
                 }
                 yield f"{response_chunk}\n"
 
@@ -347,7 +374,9 @@ async def handle_streaming_chat(provider, model: str, messages: List[Message], t
                 "model": full_model,
                 "created_at": datetime.utcnow().isoformat() + "Z",
                 "message": {"role": "assistant", "content": ""},
-                "done": True
+                "done": True,
+                "conversation_id": conversation_id,
+                "user_id": user_id
             }
             yield f"{final}\n"
         except Exception as e:

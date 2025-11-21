@@ -134,6 +134,11 @@ async def on_message(message: discord.Message):
                 }
             )
 
+            # Log returned conversation_id for debugging
+            returned_conv_id = response.get('conversation_id')
+            if returned_conv_id:
+                logging.debug(f"API returned conversation_id: {returned_conv_id}")
+
             # Send response
             reply = response['message']['content']
 
