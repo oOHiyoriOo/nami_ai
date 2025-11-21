@@ -1,0 +1,20 @@
+# Simplified Discord Bot Configuration
+# This bot is a thin client that forwards messages to the Personality Proxy API
+
+# Discord Bot Settings
+dc:
+  token: YOUR_DISCORD_BOT_TOKEN
+  sync_guild: -1  # -1 for global sync, or specific guild ID for faster testing
+
+# AI Channels - List of channel IDs where the bot will respond
+ai_channel:
+  - 1234567890  # Replace with your channel ID(s)
+
+# Personality Proxy API Settings
+ollama:
+  url: http://localhost:11434  # URL of your Personality Proxy API
+  model: ollama/llama2  # Model format: <provider>/<model>
+
+# Bot Settings
+bot:
+  log_level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL

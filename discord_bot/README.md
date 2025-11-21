@@ -1,6 +1,249 @@
 # Nami AI Discord Bot
 
-A Discord bot that connects to the **Personality Proxy API** to provide AI-powered conversations with personality, memory, and tool integration.
+Discord bot client for the **Personality Proxy API** system. Available in three versions:
+
+## 📚 Three Versions
+
+### 1. **V2 - Discord Adapter (Recommended)**
+**File:** `main_discord_bot_v2.py` | **[Docs](README_V2.md)**
+
+Intelligent adapter that properly translates Discord's rich format:
+- ✅ **Multi-user context** - Shows who's speaking with roles
+- ✅ **Reply chains** - Preserves conversation threads
+- ✅ **Rich content** - Handles embeds, attachments, reactions
+- ✅ **User metadata** - Roles, join dates, server info
+- ✅ **Channel context** - Thread awareness, server info
+
+**Best for:** Most users. Gives AI full Discord context.
+
+### 2. **Simple Bot**
+**File:** `main_discord_bot_simple.py` | **[Docs](README_SIMPLE.md)**
+
+Minimal thin client:
+- ✅ Forwards messages to API
+- ✅ Basic conversation history
+- ❌ No rich Discord context
+- ✅ 5 dependencies, fast startup
+
+**Best for:** Testing, minimal footprint, simple deployments.
+
+### 3. **Full Bot (Legacy)**
+**File:** `main_discord_bot.py` | **[Setup Guide](SETUP.md)**
+
+Full-featured with local memory and tools:
+- ✅ All features
+- ✅ Discord-specific tools (query messages, users, audit logs)
+- ❌ Duplicates API functionality (memory, history)
+- ❌ 17+ dependencies, larger footprint
+
+**Best for:** Discord-specific tools, standalone operation.
+
+## 🚀 Quick Start (V2 - Recommended)
+
+### Prerequisites
+1. **Discord Bot Token** - https://discord.com/developers/applications
+2. **Personality Proxy API** - Must be running
+3. **Python 3.12+**
+
+### Installation
+
+```bash
+cd discord_bot
+
+# Install dependencies
+pip install -r requirements_simple.txt  # V2 uses same deps as simple
+
+# Configure
+cp config_simple.yml.example config.yml
+nano config.yml
+```
+
+### Configuration
+
+```yaml
+dc:
+  token: YOUR_DISCORD_BOT_TOKEN
+
+ai_channel:
+  - 1234567890  # Your channel ID
+
+ollama:
+  url: http://localhost:11434  # Personality Proxy API
+  model: ollama/llama2
+
+bot:
+  log_level: INFO
+```
+
+### Discord Bot Setup
+
+1. Create bot at https://discord.com/developers/applications
+2. Enable **Message Content Intent** (required!)
+3. Generate invite with scopes: `bot`, `applications.commands`
+4. Permissions: Read Messages, Send Messages, Read History, Use Slash Commands
+
+### Run
+
+```bash
+# Make sure Personality Proxy API is running!
+python main_discord_bot_v2.py
+```
+
+## 📊 Version Comparison
+
+| Feature | V2 Adapter | Simple | Full (Legacy) |
+|---------|-----------|--------|---------------|
+| **Multi-user context** | ✅ Rich | ❌ Basic | ❌ Basic |
+| **Reply chains** | ✅ Preserved | ❌ Lost | ❌ Lost |
+| **Rich content** | ✅ Described | ❌ Ignored | ❌ Ignored |
+| **User metadata** | ✅ Roles, etc | ❌ ID only | ❌ ID only |
+| **Discord tools** | ❌ | ❌ | ✅ |
+| **Dependencies** | 5 packages | 5 packages | 17+ packages |
+| **Memory/History** | Via API | Via API | Local + API |
+| **Startup time** | Fast | Fast | Slow |
+| **Footprint** | Small | Small | Large |
+
+## 🎯 Which Version?
+
+**Start with V2 Adapter:**
+- Best Discord context for AI
+- Same minimal dependencies as simple
+- Recommended for 95% of use cases
+
+**Use Simple if:**
+- Just testing
+- Don't care about Discord context
+- Want absolutely minimal code
+
+**Use Full if:**
+- Need Discord-specific tools
+- Want standalone operation
+- Need direct database access
+
+## 📖 Documentation
+
+- **[V2 with Adapter](README_V2.md)** - Recommended, full Discord context
+- **[Simple Bot](README_SIMPLE.md)** - Minimal thin client
+- **[Full Bot Setup](SETUP.md)** - Legacy full-featured version
+- **[Architecture Comparison](ARCHITECTURE.md)** - Detailed comparison
+
+## 💡 Example: What AI Sees
+
+### V2 Adapter (Recommended)
+```
+**Alice** (roles: Admin, Moderator) [ID: 123456]
+[Replying to previous message(s):
+  Bob: What do you think?
+]
+
+says: I agree with Bob!
+attached:
+  - 🖼️ Image: screenshot.png
+reactions:
+  👍 x10
+```
+
+### Simple/Full
+```
+Alice: I agree with Bob!
+```
+
+**V2 gives AI 10x better context!**
+
+## 🔧 Commands
+
+All versions include:
+- `/toggle_ai` - Enable/disable in channel
+- `/restart` - Restart bot (owner only)
+
+Full version also has:
+- `/amnesia` - Clear memory/history
+- `/neo4j` - Query database
+- `/debug` - System info
+
+## 🌐 Architecture
+
+```
+Discord Users
+     ↓
+Discord Bot (V2 Adapter)
+     ↓ Rich formatted messages
+Personality Proxy API
+     ↓
+AI Provider + Memory + History
+```
+
+## 🐛 Troubleshooting
+
+### Bot doesn't respond
+
+1. Check API is running: `curl http://localhost:11434/health`
+2. Verify Message Content Intent enabled
+3. Check channel ID in `ai_channel` list
+4. Verify bot has permissions
+
+### AI doesn't understand context
+
+Use V2 Adapter! Simple/Full lose Discord context.
+
+### Check logs
+
+```bash
+# Enable debug logging
+# config.yml
+bot:
+  log_level: DEBUG
+
+# See formatted messages in logs/
+tail -f logs/*.log
+```
+
+## 📦 Installation Summary
+
+```bash
+# Clone/extract discord_bot folder
+cd discord_bot
+
+# V2 Adapter (Recommended)
+pip install -r requirements_simple.txt
+cp config_simple.yml.example config.yml
+# Edit config.yml
+python main_discord_bot_v2.py
+
+# Simple
+pip install -r requirements_simple.txt
+cp config_simple.yml.example config.yml
+# Edit config.yml
+python main_discord_bot_simple.py
+
+# Full (Legacy)
+pip install -r requirements.txt
+cp config.yml.example config.yml
+# Edit config.yml - needs Neo4j, etc.
+python main_discord_bot.py
+```
+
+## 🚀 Deployment
+
+All versions support:
+- Docker deployment
+- systemd services
+- Multiple bot instances (share same API)
+
+See SETUP.md for detailed deployment instructions.
+
+## 📄 License
+
+MIT License - Part of Nami AI project
+
+---
+
+**Recommended:** Start with `main_discord_bot_v2.py` for best results!
+
+**Questions?** Check the documentation:
+- [V2 Adapter Guide](README_V2.md) - Detailed features and examples
+- [Architecture Guide](ARCHITECTURE.md) - Comparison and when to use each
+- [Setup Guide](SETUP.md) - Deployment and troubleshooting
 
 ## Overview
 
