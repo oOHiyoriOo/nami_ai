@@ -1,0 +1,169 @@
+MCP Integration Architecture
+=============================
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Nami AI Application                          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                   API Server / Chat Adapters                  │  │
+│  └────────────────────────────┬─────────────────────────────────┘  │
+│                               │                                     │
+│                               ▼                                     │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │      Tool Execution Loop (lib/services/tool_executor.py)      │  │
+│  └────────────────────────────┬─────────────────────────────────┘  │
+│                               │                                     │
+│                               ▼                                     │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │         Tool Execution (_execute_tool_calls)                  │  │
+│  │         Calls: tool['func'](client, source_user, **args)      │  │
+│  └───────────────┬────────────────────────────┬─────────────────┘  │
+│                  │                            │                     │
+│        ┌─────────▼─────────┐       ┌──────────▼─────────┐          │
+│        │   Local Tools     │       │    MCP Tools       │          │
+│        │  (OllamaTools/)   │       │  (via wrappers)    │          │
+│        └─────────┬─────────┘       └──────────┬─────────┘          │
+│                  │                            │                     │
+│                  ▼                            ▼                     │
+│        ┌──────────────────┐       ┌─────────────────────┐          │
+│        │ Direct execution │       │   MCPClient         │          │
+│        │ (Python function)│       │ call_tool(...)      │          │
+│        └──────────────────┘       └──────────┬──────────┘          │
+│                                              │                      │
+│                                              │ JSON-RPC             │
+└──────────────────────────────────────────────┼──────────────────────┘
+                                               │
+                                               │ stdio transport
+                                               │
+         ┌─────────────────────────────────────┼──────────────────┐
+         │              External Processes     │                  │
+         ├─────────────────────────────────────┼──────────────────┤
+         │                                     │                  │
+         │  ┌─────────────────────┐  ┌─────────▼────────────┐    │
+         │  │  MCP Server 1       │  │  MCP Server 2        │    │
+         │  │  (filesystem)       │  │  (github)            │    │
+         │  │                     │  │                      │    │
+         │  │  npx @mcp/fs /path  │  │  npx @mcp/github     │    │
+         │  └─────────────────────┘  └──────────────────────┘    │
+         └──────────────────────────────────────────────────────┘
+
+
+Tool Loading Flow
+==================
+
+1. App Startup (app_initializer.py)
+   │
+   ├─► Load Local Tools (load_tools)
+   │   └─► Scan OllamaTools/ directory
+   │       └─► Import each *.py file
+   │           └─► Call get_tool() function
+   │               └─► Returns {type, function, func}
+   │
+   └─► Load MCP Tools (load_mcp_tools)
+       └─► Read config.yml → mcp_servers
+           └─► For each enabled server:
+               ├─► Spawn subprocess (npx/uvx + args)
+               ├─► Send JSON-RPC: initialize
+               ├─► Send JSON-RPC: tools/list
+               ├─► Receive tool definitions
+               └─► Convert to Nami format:
+                   └─► Create wrapper function
+                       └─► Calls mcp_client.call_tool()
+                           └─► Returns {type, function, func}
+
+   Combined List → g_data["tools"]
+
+
+Tool Execution Flow
+====================
+
+AI Request: "Read file /tmp/test.txt"
+   │
+   ▼
+AI Provider generates tool call:
+   {
+     "name": "mcp_filesystem_read_file",
+     "arguments": {"path": "/tmp/test.txt"}
+   }
+   │
+   ▼
+execute_tool_loop()
+   │
+   ├─► Find tool in g_data["tools"]
+   │
+   └─► Call: tool['func'](client, source_user, **arguments)
+       │
+       └─► MCP Wrapper Function:
+           │
+           ├─► Extract server name: "filesystem"
+           ├─► Extract tool name: "read_file"
+           │
+           └─► mcp_client.call_tool("filesystem", "read_file", {...})
+               │
+               ├─► Send JSON-RPC to server:
+               │   {
+               │     "method": "tools/call",
+               │     "params": {
+               │       "name": "read_file",
+               │       "arguments": {"path": "/tmp/test.txt"}
+               │     }
+               │   }
+               │
+               ├─► Receive JSON-RPC response:
+               │   {
+               │     "result": {
+               │       "content": [{"type": "text", "text": "file contents..."}]
+               │     }
+               │   }
+               │
+               └─► Return: tool_success(content)
+
+   Result → AI Provider → User
+
+
+Configuration Structure
+========================
+
+config.yml:
+  mcp_servers:
+    <server_name>:          # Identifier (e.g., "filesystem")
+      enabled: bool         # true/false
+      command: str          # "npx", "uvx", "python", etc.
+      args: list[str]       # Arguments to command
+      env: dict             # Environment variables
+        KEY: "${ENV_VAR}"   # Resolved from environment
+
+Example:
+  mcp_servers:
+    filesystem:
+      enabled: true
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+    
+    github:
+      enabled: true
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_TOKEN: "${GITHUB_TOKEN}"
+
+
+Tool Naming Convention
+=======================
+
+Local Tools:
+  - search_web
+  - search_memory
+
+MCP Tools (prefixed):
+  - mcp_playwright_browser_navigate
+  - mcp_playwright_browser_snapshot
+  - mcp_playwright_browser_screenshot
+  - mcp_filesystem_read_file
+  - mcp_filesystem_write_file
+  - mcp_github_create_issue
+  - mcp_github_search_repos
+  - mcp_postgres_query
+
+Prefix format: mcp_<server>_<original_tool_name>

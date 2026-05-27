@@ -1,0 +1,318 @@
+# API Server settings
+api:
+  host: "127.0.0.1"   # Bind to localhost by default for security. Use 0.0.0.0 only behind a reverse proxy.
+  port: 11434          # Default Ollama port for compatibility
+  # api_key: ""        # Optional: set a shared secret to require Bearer token auth on all endpoints
+
+# Default system prompt (personality)
+default_system_prompt: nami  # File in system_prompt/ directory
+
+# Default AI provider and model for chat adapters (Discord, WhatsApp, etc.)
+default_provider: ollama
+default_model: qwen3:32b
+
+# Thinking mode configuration
+thinking:
+  # Use fast mode by default (think=False for quick responses)
+  default_enabled: false
+  
+  # Model to use when thinking mode is triggered (heavier, more capable)
+  model: qwen3:32b
+
+  # Trigger words that enable thinking mode when detected in user messages
+  # Case-insensitive matching
+  trigger_words:
+    - "think deeply"
+    - "analyze carefully"
+    - "reason about"
+    - "think about this"
+    - "consider carefully"
+    - "let me think"
+
+# AI Provider configurations
+# Use models with format: <provider>/<model> (e.g., ollama/llama2, copilot/gpt-4.1)
+providers:
+  # Ollama provider configuration
+  ollama:
+    url: http://localhost:11434
+    max_tool_calls: 3
+
+  # OpenAI provider configuration (requires: pip install openai)
+  # openai:
+  #   api_key: YOUR_OPENAI_API_KEY
+  #   organization: YOUR_ORG_ID  # optional
+
+  # GitHub Copilot provider configuration (requires: pip install openai)
+  # Requires copilot-api server running separately (https://github.com/ericc-ch/copilot-api)
+  # copilot:
+  #   url: http://copilot-api:4141  # copilot-api server URL (container name or host)
+  #   api_key: dummy                 # copilot-api uses dummy auth
+
+  # Anthropic provider configuration (requires: pip install anthropic)
+  # anthropic:
+  #   api_key: YOUR_ANTHROPIC_API_KEY
+
+# Chat platform adapters — each adapter is an external WebSocket bridge service.
+# Bridges connect to nami_ai via WS: ws://nami_ai:11434/api/ws/adapter?name=<adapter>&secret=<secret>
+# Each adapter sends capabilities.register on connect and receives its config in capabilities.ack.
+# Bridges only need NAMI_WS_URL + BRIDGE_SECRET + ADAPTER_NAME to start.
+adapters:
+  discord:
+    bridge_secret: CHANGE_ME_DISCORD_SECRET  # Must match BRIDGE_SECRET in discord_bridge env
+    # Discord bot token (obtained from https://discord.com/developers/applications)
+    token: YOUR_DISCORD_BOT_TOKEN_HERE
+    # User IDs allowed to DM nami or @mention her in non-AI channels (list of strings)
+    permitted_users:
+      - "123456789012345678"
+    # Channel IDs where nami always responds (even without @mention)
+    ai_channels:
+      - "123456789012345679"
+    # Guild (server) ID for member syncing — optional, set to null or omit to disable
+    sync_guild: null
+
+  whatsapp:
+    bridge_secret: CHANGE_ME_WHATSAPP_SECRET  # Must match BRIDGE_SECRET in whatsapp_bridge env
+    # Phone numbers allowed to chat (international format without +, e.g. "447700900000")
+    permitted_numbers:
+      - "447700900000"
+    # WhatsApp group IDs where nami always responds (format: "1234567890-1234567890@g.us")
+    ai_groups: []
+    # Max conversation history entries sent to nami per message
+    max_history: 50
+    # Directory for WWeb.js authentication sessions (relative to bridge working dir)
+    session_dir: ".wwebjs_auth"
+
+# Bot settings
+bot:
+  log_level: INFO              # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  max_tool_calls: 3            # Max consecutive *identical* tool rounds before aborting (loop guard).
+                               # Different tool calls reset the counter, so autonomous work is unlimited.
+  retry_max_attempts: 5        # Retry attempts for transient provider errors (backoff: 1s, 2s, 4s...)
+  history_max_age_days: 30     # Only include messages from the last N days in context window
+  history_db_retention_days: 90  # Hard-delete messages older than N days from the DB on startup
+  timezone: Europe/Berlin      # Timezone for {{time}}/{{date}} templates in system prompts
+
+# Used by the memory module to store data.
+neo4j:
+  pass: NEO4J_PASSWORD_HERE
+  uri: bolt://neo4j:7687  # Docker service name — change to external IP if running Neo4j separately
+  user: neo4j
+
+# Memory system settings
+memory:
+  # Embedding settings for similarity search
+  embedding_model: all-MiniLM-L6-v2  # Sentence transformer model for embeddings
+  embedding_dimension: 384           # Must match model output dimension
+  embedding_max_input_chars: 6000    # Truncate embedding input to avoid model context overflow
+  similarity_threshold: 0.65         # Minimum similarity score for retrieval
+  cleanup_threshold: 10000           # Memory count triggering cleanup
+  window_turns: 3                    # Sliding window: carry recalled memories forward N turns (0 = off)
+  
+  # Memory extraction AI settings
+  extraction_provider: ollama        # AI provider for memory extraction (ollama, openai, etc.)
+  extraction_model: llama3.2         # Model for memory extraction (use smaller/cheaper models)
+  extraction_batch_size: 10          # Number of memories to batch before writing
+  extraction_batch_interval: 5.0    # Seconds to wait before writing batch
+  extraction_min_chars: 150          # Skip extraction if turn content is shorter than this
+  extraction_cooldown_seconds: 180   # Min seconds between extractions for the same conversation
+
+# Auto-Dream: background memory consolidation during idle time
+# Nami "dreams" when she's been quiet long enough — deduplicating, fixing contradictions,
+# pruning stale memories, and promoting important ones.
+dream:
+  enabled: true
+  min_idle_hours: 2          # Hours of silence before dreaming
+  min_new_memories: 5        # Minimum new memories required since last dream
+  max_tool_calls: 40         # Max consecutive identical rounds for dream agent (loop guard)
+  # provider: ollama         # Optional — falls back to memory.extraction_provider
+  # model: qwen3:32b          # Optional — falls back to memory.extraction_model
+
+# Vision processing settings
+vision:
+  enabled: true                      # Master switch for vision features
+  fallback_provider: ollama          # Provider for vision analysis when chat model lacks vision
+  fallback_model: llama3.2-vision:11b # Vision model for image description
+  max_image_size: 5242880            # 5MB limit per image (5 * 1024 * 1024)
+
+# File paths (relative to project root)
+paths:
+  history_schema: lib/Storage/history_schem.json
+  history_db: history.db
+  scheduler_db: scheduler.db
+  system_prompt_dir: system_prompt
+
+# MCP (Model Context Protocol) Servers
+# Enable remote tool providers via MCP protocol
+# mcp_servers:
+#   # ── Sandbox-proxied MCP servers (recommended) ──────────────────────────────
+#   # Route MCP stdio through SSH into the sandbox container so the server runs
+#   # with full sandbox environment (conda, nvm, etc.) and direct /workspace access.
+#   # -T disables TTY allocation, -q suppresses SSH banners — both required for
+#   # clean JSON-RPC over stdio.
+#   #
+#   # Sandbox filesystem access
+#   sandbox_filesystem:
+#     enabled: false
+#     command: ssh
+#     args:
+#       - "-i"
+#       - "/secrets/sandbox_ssh_key"
+#       - "-o"
+#       - "StrictHostKeyChecking=no"
+#       - "-o"
+#       - "UserKnownHostsFile=/dev/null"
+#       - "-T"
+#       - "-q"
+#       - "root@nami_sandbox"
+#       - "npx -y @modelcontextprotocol/server-filesystem /workspace"
+#     reconnect: true
+#   
+#   # Sandbox shell / code execution (e.g. mcp-shell-server)
+#   sandbox_shell:
+#     enabled: false
+#     command: ssh
+#     args:
+#       - "-i"
+#       - "/secrets/sandbox_ssh_key"
+#       - "-o"
+#       - "StrictHostKeyChecking=no"
+#       - "-o"
+#       - "UserKnownHostsFile=/dev/null"
+#       - "-T"
+#       - "-q"
+#       - "root@nami_sandbox"
+#       - "npx -y @modelcontextprotocol/server-shell"
+#     reconnect: true
+#   
+#   # ── Direct (non-sandbox) MCP servers ──────────────────────────────────────
+#   # GitHub integration (issues, PRs, repos)
+#   github:
+#     enabled: true
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-github"]
+#     env:
+#       GITHUB_TOKEN: "${GITHUB_TOKEN}"
+#     reconnect: true
+#   
+#   # Sandbox codebase — read-only filesystem access to sandbox /workspace
+#   # Mounted 1:1 via docker-compose (sandbox_data:/workspace:ro) so paths
+#   # match what sandbox_read_file and run_bash see. Exposes
+#   # mcp_sandbox_codebase_read_file, mcp_sandbox_codebase_list_directory, etc.
+#   sandbox_codebase:
+#     enabled: true
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+#     reconnect: true
+#   
+#   # PostgreSQL database access
+#   postgres:
+#     enabled: false
+#     command: uvx
+#     args: ["mcp-server-postgres", "postgresql://localhost/mydb"]
+#   
+#   # ── Built-in MCP servers (shipped with nami_ai) ────────────────────────────
+#   # Gitea integration (issues, PRs, repos) — Python script, no build needed
+#   gitea:
+#     enabled: true
+#     command: python
+#     args: ["/app/mcp/gitea-mcp-stdio/main.py"]
+#     env:
+#       GITEA_URL: "http://your-gitea-host:3000"
+#       GITEA_TOKEN: "${GITEA_TOKEN}"
+#     reconnect: true
+#   
+#   # Neo4j memory graph — TypeScript, compiled to dist/ by nami_start.sh
+#   # cwd: required so node resolves modules relative to the package root
+#   neo_memory:
+#     enabled: true
+#     command: node
+#     args: ["dist/index.js"]
+#     cwd: /app/mcp/neo-memory-mcp
+#     env:
+#       NEO4J_URI: "bolt://your-neo4j-host:7687"
+#       NEO4J_USER: "neo4j"
+#       NEO4J_PASSWORD: "neo-memory-secret"
+#     reconnect: true
+#
+#   # ── Playwright MCP — real browser for web research ────────────────────────
+#   # Exposes tools prefixed mcp_playwright_: browser_navigate, browser_snapshot,
+#   # browser_screenshot, browser_click, browser_type, browser_scroll, etc.
+#   # Requires Playwright Chromium to be installed (nami_start.sh handles this).
+#   # Anti-bot config (disable automation flags, realistic UA) lives in
+#   # config/playwright-mcp.json — edit that file to tune fingerprint/stealth.
+#   playwright:
+#     enabled: true
+#     command: npx
+#     args:
+#       - "-y"
+#       - "@playwright/mcp@latest"
+#       - "--config"
+#       - "/app/config/playwright-mcp.json"
+#       - "--isolated"    # fresh browser context per session (no cross-session cookie leakage)
+#     reconnect: true
+
+
+# Sandbox — isolated Docker container for AI bash execution
+# Requires the 'sandbox' Docker Compose profile (--profile sandbox)
+# The password is resolved at startup from (in order):
+#   1. SANDBOX_PASSWORD environment variable
+#   2. /secrets/sandbox_password (auto-generated by the sandbox container)
+#   3. sandbox.password in this config file
+sandbox:
+  enabled: false           # set to true to give AI access to bash sandbox
+  host: sandbox            # Docker service name (internal network)
+  port: 22
+  username: root
+  # password:               # optional — prefer env var or auto-generated file
+  fg_timeout: 15.0         # seconds before a command is auto-backgrounded
+  max_output_kb: 16        # max output size per job returned to AI
+
+# Heartbeat — generic autonomous tick loop with pluggable modules
+# Nami's "Eigeninitiative": ticks on a configurable interval, checks
+# conditions across all modules, and dispatches actions autonomously.
+heartbeat:
+  enabled: true
+  tick_interval: 30        # seconds between each tick
+  watchdog_threshold: 300  # warn if no event processed for this many seconds
+  modules:
+    system_health:
+      enabled: true
+      cooldown: 300            # every 5 min
+      neo4j_timeout_ms: 5000   # max ms for RETURN 1 query
+      provider_timeout_s: 10   # max seconds per provider ping
+      notify_on_degrade: true  # log Nami-style messages on state changes
+      notify_channel: ""       # optional: "<adapter>:<conversation_id>" for alert routing (e.g. "discord:123456789")
+      tools: []                # no AI tools needed (purely health checks)
+    memory_grooming:
+      enabled: true
+      cooldown: 7200          # every 2 hours
+      min_new_memories: 5     # only run when enough new memories
+      provider: ollama        # use a small model for cost efficiency
+      model: llama3.2         # small model for analysis
+      max_tool_calls: 8       # limit AI tool calls
+      auto_merge: false       # suggest only, don't auto-merge (safety)
+      tools: [memory_read, memory_write]  # tool categories for grooming agent
+    dream: {enabled: true, cooldown: 60, night_start_hour: 20, night_end_hour: 6, tools: [memory_read, memory_write]}   # gate checks every 60s; dreams 20:00–06:00
+    curiosity:
+      enabled: true
+      cooldown: 1800              # 30 minutes between checks
+      min_idle_minutes: 30        # Phase A (discovery) only fires when idle this long
+      max_daily_sessions: 3       # Max research sessions per day (Phase A + B combined)
+      discovery_max_topics: 2     # Topics queued per autonomous discovery pass
+      max_tool_calls: 40          # Research Agent tool call budget
+      provider: ollama            # Provider for both discovery and research agents
+      model: llama3.2             # Model for both agents (use a capable one for research)
+      day_start_hour: 6           # Phase A only fires between 06:00 and 20:00 (local time)
+      day_end_hour: 20            # Outside this window the dream module takes over
+
+# Tool-specific configuration
+# Individual settings for built-in tools
+tools: {}
+
+# Notifications — proactive message delivery for autonomous events
+# Used by TaskScheduler, SystemHealthCheck, MemoryGrooming, etc.
+# Falls back to log-only if no adapter/conversation_id is configured.
+notifications:
+  adapter: ""                   # adapter name, e.g. "discord" or "whatsapp" (empty = log-only)
+  conversation_id: ""           # conversation/channel ID to send to
+  truncate: true                # auto-truncate long messages

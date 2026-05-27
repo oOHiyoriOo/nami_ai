@@ -1,0 +1,170 @@
+services:
+  nami_ai:
+    image: python:3.12-slim
+    container_name: nami_ai
+    restart: unless-stopped
+    working_dir: /app
+    command: bash /scripts/nami_start.sh
+    ports:
+      - "127.0.0.1:11435:11434"   # Bind to localhost — use a reverse proxy for external access
+    volumes:
+      - .:/app                              # source mount
+      - pip_cache:/root/.cache/pip          # pip cache — avoids re-downloading on restart
+      - ./drive_c/site_packages:/usr/local/lib/python3.12/site-packages  # installed packages persist
+      - ./drive_c/hf_cache:/root/.cache/huggingface   # sentence-transformer model cache (legacy, harmless)
+      - ./mcp:/app/mcp                              # local MCP server scripts (includes neo-memory-mcp submodule)
+      - sandbox_secrets:/secrets:ro         # read auto-generated sandbox SSH password
+      - sandbox_data:/workspace:ro           # read-only sandbox files for MCP servers (1:1 path match)
+      - ./scripts:/scripts:ro               # startup scripts
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:11434/health', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 6
+      start_period: 120s
+    depends_on:
+      nami_neo4j:
+        condition: service_healthy
+    networks:
+      - nami_net
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PIP_ROOT_USER_ACTION=ignore   # allow pip cache when running as root
+      
+      - GITEA_TOKEN=${GITEA_TOKEN:-}
+
+  # ── Sandbox (standard — Ubuntu 22.04, x86/ARM, no GPU) ─────────────────────
+  # Use with: --profile sandbox
+  sandbox:
+    image: ubuntu:22.04
+    container_name: nami_sandbox
+    restart: unless-stopped
+    profiles: ["sandbox"]
+    networks:
+      nami_net:
+        aliases:
+          - nami_sandbox
+    volumes:
+      - sandbox_data:/workspace
+      - sandbox_secrets:/secrets
+      - sandbox_pip_cache:/root/.cache/pip
+      - sandbox_site_packages:/usr/local/lib/python3.10/dist-packages
+      - sandbox_conda:/opt/conda
+      - sandbox_nvm:/root/.nvm
+      - sandbox_sdkman:/root/.sdkman
+      - ${NAS_PATH:-/mnt/nas/nami_ai}:/mnt/nas
+      - ./scripts:/scripts:ro               # startup scripts
+    environment:
+      - SANDBOX_PASSWORD=${SANDBOX_PASSWORD:-}
+      - PIP_ROOT_USER_ACTION=ignore
+    command: bash /scripts/sandbox_start.sh
+
+  # ── Sandbox (Jetson GPU — jetson-containers, ARM64, CUDA) ───────────────────
+  # Pre-built for NVIDIA Jetson. Exposes GPU to Nami's bash tool.
+  # Build first:  cd sandbox && ./build.sh   (runs on the Jetson, uses jetson-containers)
+  # Use with:     --profile sandbox-jetson  (instead of --profile sandbox)
+  sandbox_jetson:
+    image: nami_sandbox:jetson
+    container_name: nami_sandbox
+    restart: unless-stopped
+    profiles: ["sandbox-jetson"]
+    networks:
+      nami_net:
+        aliases:
+          - nami_sandbox
+    volumes:
+      - sandbox_data:/workspace
+      - sandbox_secrets:/secrets
+      - sandbox_jetson_pip_cache:/root/.cache/pip
+      - sandbox_jetson_site_packages:/usr/local/lib/python3.10/dist-packages  # adjust path for your Python version
+      - ${NAS_PATH:-/mnt/nas/nami_ai}:/mnt/nas
+      - ./scripts:/scripts:ro               # startup scripts
+    environment:
+      - SANDBOX_PASSWORD=${SANDBOX_PASSWORD:-}
+      - PIP_ROOT_USER_ACTION=ignore
+    runtime: nvidia       # requires nvidia-container-runtime on the Jetson host
+    command: bash /scripts/sandbox_jetson_start.sh
+    expose:
+      - "22"
+
+  discord_bridge:
+    build:
+      context: ./adapters/discord_bridge
+      dockerfile: Dockerfile
+    image: nami-discord-bridge:latest
+    container_name: nami_discord
+    restart: unless-stopped
+    profiles: ["discord"]
+    volumes:
+      - ./drive_c/discord_history:/app/history
+    environment:
+      - NAMI_WS_URL=ws://nami_ai:11434/api/ws/adapter
+      - ADAPTER_NAME=discord
+      - BRIDGE_SECRET=${DISCORD_BRIDGE_SECRET:-}
+      # All other config (token, permitted_users, ai_channels) comes from nami via capabilities.ack
+    depends_on:
+      nami_ai:
+        condition: service_healthy
+    networks:
+      - nami_net
+
+  whatsapp_bridge:
+    build: ./adapters/whatsapp_bridge
+    container_name: nami_whatsapp
+    restart: unless-stopped
+    profiles: ["whatsapp"]
+    volumes:
+      - ./drive_c/wwebjs_auth:/app/.wwebjs_auth
+      - ./drive_c/whatsapp_history:/app/history
+    environment:
+      - PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}
+      - NAMI_WS_URL=ws://nami_ai:11434/api/ws/adapter
+      - ADAPTER_NAME=whatsapp
+      - BRIDGE_SECRET=${WHATSAPP_BRIDGE_SECRET:-}
+      # All other config (permitted_numbers, ai_groups, session_dir, max_history) comes from nami via capabilities.ack
+    depends_on:
+      nami_ai:
+        condition: service_healthy
+    networks:
+      - nami_net
+
+  nami_neo4j:
+    image: neo4j:latest
+    container_name: nami_neo4j
+    restart: unless-stopped
+    # No host port mapping - Neo4j is accessible only within the nami_net Docker network.
+    # For debugging access, use an SSH tunnel or bind to 127.0.0.1:7474:7474.
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    volumes:
+      - ./drive_c/neo4j_data:/data
+      - ./drive_c/neo4j_logs:/logs
+    networks:
+      - nami_net
+    ports:
+      - "7475:7474" # expose neo4j browser.
+      - "7688:7687" # expose bolt
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  sandbox_data:
+  sandbox_secrets:
+  sandbox_conda:
+  sandbox_nvm:
+  sandbox_sdkman:
+  pip_cache:
+  sandbox_pip_cache:
+  sandbox_site_packages:
+  sandbox_jetson_pip_cache:
+  sandbox_jetson_site_packages:
+
+networks:
+  nami_net:
+    driver: bridge

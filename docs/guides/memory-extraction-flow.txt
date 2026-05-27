@@ -1,0 +1,206 @@
+Memory Extraction Model Configuration - Data Flow
+==================================================
+
+BEFORE (Same Model for Everything)
+===================================
+
+User Message
+    │
+    ▼
+┌─────────────────────────────────────┐
+│   API Server / Chat Adapter         │
+└─────────────┬───────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────┐
+│   Context Builder                   │
+│   (adds personality + memories)     │
+└─────────────┬───────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────┐
+│   AI Provider (e.g., ollama/qwen3)  │  ◄── Large, expensive model
+│   Model: qwen3:32b                  │
+└─────────────┬───────────────────────┘
+              │
+              ▼
+AI Response to User
+    │
+    └──────────────────────┐
+                           ▼
+                ┌─────────────────────────────┐
+                │   Memory Extractor          │
+                │   Uses: SAME MODEL          │  ◄── Problem!
+                │   Model: qwen3:32b          │      Too expensive!
+                └─────────────┬───────────────┘
+                              │
+                              ▼
+                      ┌──────────────────┐
+                      │   Neo4j Memory   │
+                      │   Database       │
+                      └──────────────────┘
+
+
+AFTER (Separate Models)
+========================
+
+User Message
+    │
+    ▼
+┌─────────────────────────────────────┐
+│   API Server / Chat Adapter         │
+└─────────────┬───────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────┐
+│   Context Builder                   │
+│   (adds personality + memories)     │
+└─────────────┬───────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────┐
+│   AI Provider (e.g., ollama/qwen3)  │  ◄── Large model for chat
+│   Model: qwen3:32b                  │      (configured normally)
+│   Config: default_model             │
+└─────────────┬───────────────────────┘
+              │
+              ▼
+AI Response to User
+    │
+    └──────────────────────┐
+                           ▼
+                ┌─────────────────────────────┐
+                │   Memory Extractor          │
+                │   Uses: SEPARATE MODEL      │  ◄── Solution!
+                │   Model: llama3.2           │      Small & fast!
+                │   Config: extraction_model  │
+                └─────────────┬───────────────┘
+                              │
+                              ▼
+                      ┌──────────────────┐
+                      │   Neo4j Memory   │
+                      │   Database       │
+                      └──────────────────┘
+
+
+Configuration Mapping
+=====================
+
+Chat Model Selection:
+    config.yml → default_provider → default_model
+    OR
+    API request → model parameter (e.g., "ollama/qwen3:32b")
+
+Memory Extraction Model Selection:
+    config.yml → memory.extraction_provider
+    config.yml → memory.extraction_model
+    
+    Priority:
+    1. memory.extraction_model (NEW!)
+    2. providers.<provider>.default_model
+    3. Hardcoded fallback: "llama3.2"
+
+
+Example Configuration
+=====================
+
+config.yml:
+```yaml
+# Main chat model (large, accurate)
+default_provider: ollama
+default_model: qwen3:32b
+
+providers:
+  ollama:
+    url: http://localhost:11434
+    default_model: qwen3:32b  # Used if no extraction_model specified
+
+# Memory extraction model (small, fast, cheap)
+memory:
+  extraction_provider: ollama
+  extraction_model: llama3.2    # ← NEW! Different from chat model
+  extraction_batch_size: 10
+  extraction_batch_interval: 5.0
+```
+
+
+Cost Comparison Example
+========================
+
+Scenario: OpenAI with 1000 messages/day
+
+BEFORE (same model):
+  Chat:              1000 messages × GPT-4    = $30/day
+  Memory Extraction: 1000 messages × GPT-4    = $30/day
+  TOTAL: $60/day = $1,800/month
+
+AFTER (separate models):
+  Chat:              1000 messages × GPT-4        = $30/day
+  Memory Extraction: 1000 messages × GPT-3.5-turbo = $3/day
+  TOTAL: $33/day = $990/month
+
+SAVINGS: $810/month (45% reduction!)
+
+
+Model Selection Logic (Code)
+=============================
+
+lib/services/memory_extractor.py → _call_provider():
+
+```python
+# Get model with priority chain
+model = self.model_name                          # 1. Constructor arg
+if not model:
+    memory_config = cfg.data.get('memory', {})
+    model = memory_config.get('extraction_model')  # 2. Config (NEW!)
+if not model:
+    model = provider_config.get('default_model')   # 3. Provider default
+if not model:
+    model = 'llama3.2'                             # 4. Hardcoded fallback
+
+logging.debug(f"Memory extraction using {self.provider_name}/{model}")
+```
+
+
+Use Case Examples
+=================
+
+1. Cost Optimization (Cloud API)
+   Chat: GPT-4
+   Memory: GPT-3.5-turbo
+   Benefit: 10x cost reduction
+
+2. Speed Optimization (Local Models)
+   Chat: qwen3:32b (large, accurate)
+   Memory: llama3.2 (small, fast)
+   Benefit: 5x faster background processing
+
+3. Hybrid Setup (Cloud + Local)
+   Chat: Claude Opus (cloud, expensive)
+   Memory: Ollama llama3.2 (local, free)
+   Benefit: No API costs for background tasks
+
+4. Resource Management (GPU)
+   Chat: Large model (8GB VRAM)
+   Memory: Small model (2GB VRAM)
+   Benefit: Parallel execution without OOM
+
+
+Recommended Models by Provider
+===============================
+
+Ollama (Local):
+  Chat:   qwen3:32b, llama3.1:70b, mistral-large
+  Memory: llama3.2, phi-3, gemma-2-2b
+
+OpenAI:
+  Chat:   gpt-4, gpt-4-turbo
+  Memory: gpt-3.5-turbo, gpt-4o-mini
+
+Anthropic:
+  Chat:   claude-opus-4, claude-sonnet-4
+  Memory: claude-haiku
+
+GitHub Copilot:
+  Chat:   gpt-4.1
+  Memory: gpt-4.1-codex-mini

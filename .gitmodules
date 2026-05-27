@@ -1,0 +1,4 @@
+[submodule "mcp/neo-memory-mcp"]
+	path = mcp/neo-memory-mcp
+	url = git@github.com:oOHiyoriOo/neo-memory-mcp.git
+	branch = backend/neo4j

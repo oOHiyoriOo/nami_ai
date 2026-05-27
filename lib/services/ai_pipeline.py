@@ -1,0 +1,354 @@
+"""
+ai_pipeline.py — Shared AI request pipeline for all adapters and the REST API.
+
+Encapsulates the full AI interaction flow:
+  1. Context building (personality + memories)
+  2. Vision preprocessing
+  3. Thinking mode resolution (trigger words / explicit flag)
+  4. Provider chat call
+  5. Tool execution loop
+  6. Model cache recording
+  7. Fire-and-forget memory extraction
+
+New adapters only need to prepare an ``AIPipelineRequest`` and call
+``ai_pipeline.run()``.  Provider resolution is intentionally left to the
+caller so that each surface can handle failures appropriately (HTTP exception
+for the REST API, log-and-return for chat adapters).
+"""
+
+import asyncio
+import logging
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable
+
+from lib.ai_providers import Message
+from lib.global_registry import g_data
+from lib.services.tool_executor import execute_tool_loop
+from lib.services.memory_processor import process_memories
+from lib.utils.retry import with_retry
+
+# Task-local context injected by the pipeline before tool execution.
+# Tools (e.g. schedule_task) read this to get the caller's user_id /
+# conversation_id without needing explicit parameter injection.
+# ContextVar is asyncio-safe: each task gets its own copy.
+pipeline_ctx: ContextVar[dict] = ContextVar("pipeline_ctx", default={})
+
+
+@dataclass
+class AIPipelineRequest:
+    """Platform-agnostic input for the AI pipeline."""
+
+    messages: list[dict]
+    """Conversation history as dicts with keys: role, content, tool_calls, images."""
+
+    user_id: str | None = None
+    """Scoped user ID (e.g. 'discord:123456789') for memory and context."""
+
+    conversation_id: str | None = None
+    """Channel or conversation identifier for history scoping."""
+
+    enable_memory: bool = True
+    """Inject relevant memories into context and extract new ones after the turn."""
+
+    enable_personality: bool = True
+    """Prepend system prompt to context."""
+
+    image_urls: list[str] = field(default_factory=list)
+    """Image URLs to attach to the last user message (e.g. from Discord attachments)."""
+
+    think_override: bool | None = None
+    """Explicit thinking mode flag. None = auto-detect from trigger words."""
+
+    options: dict[str, Any] | None = None
+    """Provider-specific options (temperature, top_p, num_predict, etc.)."""
+
+    provider_tool_schemas: list[dict] | None = None
+    """
+    Provider-facing tool schemas (without 'func').
+    None  = use global tools + adapter tools (default).
+    []    = disable tools for this request.
+    [...] = use these client-provided schemas (global + adapter tools still executable).
+    """
+
+    additional_tools: list[dict] | None = None
+    """
+    Per-conversation adapter tools (include 'func' closures) injected by the
+    pipeline handler from the originating adapter's registered capabilities.
+    Merged with global tools for both execution and schema generation.
+    """
+
+    display_name: str | None = None
+    """Human-readable display name (e.g. Discord display name / nickname)."""
+
+    channel_name: str | None = None
+    """Channel name (e.g. '#general', 'DM', etc.)."""
+
+    guild_name: str | None = None
+    """Server / group name."""
+
+    is_dm: bool = False
+    """Whether this conversation is a direct message."""
+
+
+@dataclass
+class AIPipelineResult:
+    """Output from the AI pipeline."""
+
+    content: str
+    """AI response text."""
+
+    thinking: str | None = None
+    """Internal reasoning (not shown to the user; available for logging/debug)."""
+
+    model_used: str = ""
+    """Actual model name used (may differ from default when thinking mode activates)."""
+
+    tool_messages: list[dict] = field(default_factory=list)
+    """Tool response messages with ``[TOOL_RESPONSE:uuid]`` placeholders for
+    persistence in chat history.  The full responses are stored in
+    :class:`ToolResponseLog` and retrievable on demand."""
+
+
+class AIPipeline:
+    """
+    Shared AI request pipeline used by all adapters and the REST API.
+
+    Usage::
+
+        result = await ai_pipeline.run(
+            AIPipelineRequest(messages=history, user_id="discord:123"),
+            provider=my_provider,
+            model_name="llama3.2",
+            full_model_ref="ollama/llama3.2",
+            on_tool_start=lambda name: adapter.set_status(f"Using {name}…"),
+            on_tool_done=lambda: adapter.set_status("Thinking…"),
+            original_user_msg=message.content,
+        )
+    """
+
+    async def run(
+        self,
+        request: AIPipelineRequest,
+        provider,
+        model_name: str,
+        full_model_ref: str = "",
+        *,
+        on_thinking_mode: Callable[[], Awaitable[None]] | None = None,
+        on_tool_start: Callable[[str], Awaitable[None]] | None = None,
+        on_tool_done: Callable[[], Awaitable[None]] | None = None,
+        user_name: str | None = None,
+        original_user_msg: str = "",
+        timestamp=None,
+    ) -> AIPipelineResult:
+        """
+        Execute the full AI pipeline for a single conversation turn.
+
+        Args:
+            request:          Platform-agnostic input.
+            provider:         Pre-resolved AI provider instance.
+            model_name:       Base model name (may be overridden by thinking mode).
+            full_model_ref:   Full "provider/model" string for model cache recording.
+            on_thinking_mode: Optional async callback fired when thinking mode activates.
+            on_tool_start:    Optional async callback(tool_name) before each tool call.
+            on_tool_done:     Optional async callback() after each tool call.
+            user_name:        Human-readable display name for memory extraction.
+            original_user_msg: Last user message text for memory extraction.
+            timestamp:        Message timestamp for memory storage (defaults to now).
+
+        Returns:
+            AIPipelineResult with content, optional thinking, and the model used.
+        """
+        cfg = g_data.get("cfg")
+
+        # --- 1. Context building (personality + memories) ---
+        context_builder = g_data.get("context_builder")
+        enhanced = await context_builder.build_context(
+            messages=request.messages,
+            user_id=request.user_id,
+            conversation_id=request.conversation_id,
+            enable_personality=request.enable_personality,
+            enable_memory=request.enable_memory,
+            display_name=request.display_name,
+            channel_name=request.channel_name,
+            guild_name=request.guild_name,
+            is_dm=request.is_dm,
+            user_name=user_name,
+        )
+
+        # --- 2. Convert to provider Messages; inject images into last user msg ---
+        provider_messages = self._to_provider_messages(enhanced, request.image_urls)
+
+        # --- 3. Vision preprocessing ---
+        vision_service = g_data.get("vision_service")
+        if vision_service:
+            # Ensure provider capabilities are queried for this model before checking
+            provider.ensure_capabilities(model_name)
+            provider_messages = await vision_service.preprocess_messages(
+                provider_messages, provider.supports_vision()
+            )
+
+        # --- 4. Resolve tools ---
+        raw_tools = list(g_data.get("tools") or [])
+        if request.additional_tools:
+            raw_tools = raw_tools + request.additional_tools
+        if request.provider_tool_schemas is not None:
+            # Client-provided schemas — only these are sent to the AI,
+            # but global tools still handle execution of any matching calls.
+            provider_tools = request.provider_tool_schemas or None
+        else:
+            provider_tools = (
+                [{k: v for k, v in t.items() if k != "func"} for t in raw_tools] or None
+            )
+
+        # --- 5. Thinking mode ---
+        thinking_cfg = cfg.data.get("thinking", {}) if cfg else {}
+        use_thinking, active_model = resolve_thinking_mode(
+            content=original_user_msg,
+            default_model=model_name,
+            thinking_cfg=thinking_cfg,
+            override=request.think_override,
+        )
+        if use_thinking:
+            logging.info(f"[pipeline] Thinking mode → '{active_model}'")
+            if on_thinking_mode:
+                await on_thinking_mode()
+
+        # --- 6. Provider call (with retry + backoff) ---
+        chat_kwargs = {"model": active_model}
+        if use_thinking:
+            chat_kwargs["think"] = True
+        if request.options:
+            chat_kwargs["options"] = request.options
+        retry_attempts = cfg.data.get("bot", {}).get("retry_max_attempts", 5) if cfg else 5
+        response = await with_retry(
+            lambda: provider.chat(provider_messages, provider_tools, **chat_kwargs),
+            max_attempts=retry_attempts,
+            label=f"provider.chat({active_model})",
+        )
+
+        # --- 7. Tool execution loop ---
+        used_tools = False
+        tool_placeholders: list[dict] = []
+        if response.tool_calls and raw_tools:
+            used_tools = True
+            max_tool_calls = cfg.data.get("bot", {}).get("max_tool_calls", 10) if cfg else 10
+            # Inject request context so tools can access user_id / conversation_id
+            # without being passed as explicit parameters.
+            _ctx_token = pipeline_ctx.set({
+                "user_id": request.user_id or "",
+                "conversation_id": request.conversation_id or "",
+            })
+            try:
+                response, tool_msgs = await execute_tool_loop(
+                    provider=provider,
+                    messages=provider_messages,
+                    tools=raw_tools,
+                    model=active_model,
+                    initial_response=response,
+                    max_calls=max_tool_calls,
+                    on_tool_start=on_tool_start,
+                    on_tool_done=on_tool_done,
+                )
+            finally:
+                pipeline_ctx.reset(_ctx_token)
+
+            # execute_tool_loop returns placeholder messages (content stored in ToolResponseLog).
+            tool_placeholders = [
+                {"role": m.role, "content": m.content, "tool_call_id": m.tool_call_id}
+                for m in tool_msgs
+            ]
+
+        # --- 8. Model cache ---
+        model_cache = g_data.get("model_cache")
+        if model_cache and full_model_ref:
+            model_cache.record_success(full_model_ref)
+
+        # --- 8b. Broadcast activity to dream / curiosity / heartbeat via event bus ---
+        event_bus = g_data.get("event_bus")
+        if event_bus:
+            from lib.services.event_bus import Event
+            asyncio.create_task(event_bus.publish(Event("activity.recorded", {})))
+
+        # --- 9. Memory extraction (fire-and-forget) ---
+        content = response.content or ""
+        if request.enable_memory and original_user_msg and content and content != "<ignore>":
+            turn_content = f"User: {original_user_msg}\nAssistant: {content}"
+            asyncio.create_task(
+                process_memories(
+                    message_content=turn_content,
+                    user_id=request.user_id,
+                    user_name=user_name or request.user_id or "unknown",
+                    conversation_id=request.conversation_id or "",
+                    timestamp=timestamp,
+                    has_tool_calls=used_tools,
+                )
+            )
+
+        return AIPipelineResult(
+            content=content,
+            thinking=response.thinking,
+            model_used=active_model,
+            tool_messages=tool_placeholders,
+        )
+
+    @staticmethod
+    def _to_provider_messages(enhanced: list[dict], image_urls: list[str]) -> list[Message]:
+        """
+        Convert context dicts to provider Message objects.
+        Injects ``image_urls`` into the last user message when provided.
+        """
+        messages = []
+        for i, m in enumerate(enhanced):
+            is_last_user = i == len(enhanced) - 1 and m["role"] == "user"
+            images = image_urls if (is_last_user and image_urls) else (m.get("images") or None)
+            messages.append(
+                Message(
+                    role=m["role"],
+                    content=m["content"],
+                    tool_calls=m.get("tool_calls"),
+                    images=images,
+                )
+            )
+        return messages
+
+
+def resolve_thinking_mode(
+    content: str,
+    default_model: str,
+    thinking_cfg: dict,
+    override: bool | None = None,
+) -> tuple[bool, str]:
+    """
+    Determine whether thinking mode should be active for this request.
+
+    Priority order: explicit override → ``default_enabled`` config flag →
+    trigger word detection.
+
+    Args:
+        content:       User message content to scan for trigger words.
+        default_model: Model to use when thinking is NOT active.
+        thinking_cfg:  The ``thinking`` section from config.yml.
+        override:      Explicit True/False from the caller; None = auto-detect.
+
+    Returns:
+        Tuple of ``(use_thinking, model_name)``.
+    """
+    thinking_model = thinking_cfg.get("model", default_model)
+
+    if override is True:
+        return True, thinking_model
+    if override is False:
+        return False, default_model
+    if thinking_cfg.get("default_enabled", False):
+        return True, thinking_model
+
+    trigger_words = thinking_cfg.get("trigger_words", [])
+    if any(w.lower() in content.lower() for w in trigger_words):
+        return True, thinking_model
+
+    return False, default_model
+
+
+# Singleton — import and use directly everywhere
+ai_pipeline = AIPipeline()
