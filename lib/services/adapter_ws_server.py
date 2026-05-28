@@ -631,11 +631,10 @@ class AdapterWebSocketServer:
             future.set_result({"content": content, "thinking": None})
             return
 
-        await self._send(adapter_name, {
-            "type": "response.ready",
-            "conversation_id": conversation_id,
-            "content": content,
-        })
+        await self._send_message(
+            adapter_name, "response.ready", content,
+            conversation_id=conversation_id,
+        )
 
     async def send_conversation(
         self, adapter_name: str, conversation_id: str, content: str
@@ -647,11 +646,10 @@ class AdapterWebSocketServer:
             conversation_id: Opaque conversation identifier for that adapter.
             content:         Text content to send.
         """
-        await self._send(adapter_name, {
-            "type": "send.message",
-            "conversation_id": conversation_id,
-            "content": content,
-        })
+        await self._send_message(
+            adapter_name, "send.message", content,
+            conversation_id=conversation_id,
+        )
 
     async def send_dm(
         self, adapter_name: str, user_id: str, content: str
@@ -663,11 +661,10 @@ class AdapterWebSocketServer:
             user_id:      Opaque user identifier (without the adapter prefix).
             content:      Text content to send.
         """
-        await self._send(adapter_name, {
-            "type": "send.dm",
-            "user_id": user_id,
-            "content": content,
-        })
+        await self._send_message(
+            adapter_name, "send.dm", content,
+            user_id=user_id,
+        )
 
     async def send_message_processing(
         self, adapter_name: str, conversation_id: str
@@ -720,7 +717,7 @@ class AdapterWebSocketServer:
                 "conversation_id": conversation_id,
             }))
         except Exception:
-            pass
+            logger.debug("[ws_server] send_status failed for '%s'", adapter_name)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -748,6 +745,22 @@ class AdapterWebSocketServer:
                 "[ws_server] send '%s' to '%s' failed: %s",
                 payload.get("type"), adapter_name, e,
             )
+
+    async def _send_message(
+        self, adapter_name: str, msg_type: str, content: str, **extra: object
+    ) -> None:
+        """Build a standard payload and delegate to :meth:`_send`.
+
+        Args:
+            adapter_name: Target adapter name.
+            msg_type:     Event type string (e.g. ``"send.dm"``).
+            content:      Text content to include.
+            **extra:      Additional keys merged into the payload
+                          (e.g. ``conversation_id``, ``user_id``).
+        """
+        payload: dict[str, object] = {"type": msg_type, "content": content}
+        payload.update(extra)
+        await self._send(adapter_name, payload)
 
     def _authenticate(self, adapter_name: str, secret: str) -> bool:
         """Validate adapter name + secret against config.

@@ -1,21 +1,22 @@
 """
 dream.py — HeartbeatModule: Auto-Dream memory consolidation.
 
-Migrates DreamService's poll loop into a HeartbeatModule. The idle gate
-(min_idle_hours), new memory threshold, and dream execution are all handled
-within this module while HeartbeatService owns the tick.
+The idle gate (min_idle_hours), new memory threshold, and dream execution
+are all handled within this module while HeartbeatService owns the tick.
 
-DreamService.record_activity() is still called by the chat pipeline to
-reset the idle timer.
+record_activity() is called by the chat pipeline to reset the idle timer.
 """
 
 import asyncio
 import logging
 import time
 
+import aiosqlite
+
 from lib.global_registry import g_data
 from lib.services.heartbeat_module import HeartbeatModule
 from lib.utils.ai_lock import acquire_ai_lock
+from lib.utils.sqlite_kv import SqliteKVStore
 
 
 class DreamModule(HeartbeatModule):
@@ -43,11 +44,13 @@ class DreamModule(HeartbeatModule):
         super().__init__()
         self.config = config
         self.db_path = db_path
+        self._state = SqliteKVStore(self.db_path, "dream_state")
         mem_cfg = config.data.get("memory", {})
         self._dream_cfg = config.data.get("dream", {})
         self._min_idle_hours: float = self._dream_cfg.get("min_idle_hours", 2.0)
         self._min_new_memories: int = self._dream_cfg.get("min_new_memories", 5)
-        self._max_tool_calls: int = self._dream_cfg.get("max_tool_calls", 40)
+        self._max_tool_calls: int = self._dream_cfg.get("max_tool_calls", 5)
+        self._max_tool_rounds: int = self._dream_cfg.get("max_tool_rounds", 10)
         self._dream_provider: str | None = self._dream_cfg.get("provider")
         self._dream_model: str | None = self._dream_cfg.get("model")
         self._fallback_provider: str = mem_cfg.get("extraction_provider", "ollama")
@@ -153,7 +156,7 @@ class DreamModule(HeartbeatModule):
 
         # Gate 2: idle long enough?
         current_activity = self._last_message_at
-        await self._set_state("last_message_at", current_activity)
+        await self._state.set("last_message_at", current_activity)
 
         idle_seconds = time.time() - current_activity if current_activity > 0 else 0
         idle_hours = idle_seconds / 3600
@@ -170,7 +173,7 @@ class DreamModule(HeartbeatModule):
         self._clear_gate_block("2")
 
         # Gate 3: enough new memories since last dream?
-        last_dream_at = await self._get_state("last_dream_at", default=0.0)
+        last_dream_at = await self._state.get("last_dream_at", default=0.0)
         memory_db = g_data.get("memory_db")
         if memory_db:
             new_count = await self._count_new_memories(memory_db, last_dream_at)
@@ -233,7 +236,6 @@ class DreamModule(HeartbeatModule):
 
     async def _init_db(self) -> None:
         """Create the dream_state table if it doesn't exist."""
-        import aiosqlite
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS dream_state (
@@ -242,28 +244,8 @@ class DreamModule(HeartbeatModule):
                 )
             """)
             await db.commit()
-        stored = await self._get_state("last_message_at", default=0.0)
+        stored = await self._state.get("last_message_at", default=0.0)
         self._last_message_at = stored if stored > 0 else time.time()
-
-    async def _get_state(self, key: str, default: float = 0.0) -> float:
-        """Read a float value from dream_state table."""
-        import aiosqlite
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT value FROM dream_state WHERE key = ?", (key,)
-            ) as cur:
-                row = await cur.fetchone()
-        return float(row[0]) if row else default
-
-    async def _set_state(self, key: str, value: float) -> None:
-        """Write a float value to dream_state table."""
-        import aiosqlite
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO dream_state (key, value) VALUES (?, ?)",
-                (key, str(value)),
-            )
-            await db.commit()
 
     # ------------------------------------------------------------------
     # Internal — memory counting and dream execution
@@ -297,9 +279,23 @@ class DreamModule(HeartbeatModule):
         _DREAM_SYSTEM_PROMPT = (
             "You are performing a Dream — a quiet, reflective pass over your own memory graph.\n"
             "Your purpose is to curate and improve your memories so future conversations start with cleaner, more accurate context.\n\n"
-            "You have access to seven tools: dream_get_stats, dream_list_memories, dream_search_memories,\n"
-            "dream_get_memory, dream_update_memory, dream_delete_memory, dream_merge_memories.\n\n"
+            "You have access to dream tools (dream_get_stats, dream_list_memories, dream_search_memories,\n"
+            "dream_get_memory, dream_update_memory, dream_delete_memory, dream_merge_memories,\n"
+            "dream_find_important_memories, dream_replay_memory) and self-reflection tools\n"
+            "(self_model_get, self_model_update, self_skill_update, self_goal_update).\n\n"
             "Work through these phases in order:\n\n"
+            "## Phase 0 — Self-Reflection\n"
+            "Before curating memories, reflect on yourself as an AI agent.\n"
+            "1. Call self_model_get to see your current self-model state.\n"
+            "2. Review recent interactions (they're in the memory graph — use dream_list_memories).\n"
+            "3. Assess your performance: did you help your users? were you accurate?\n"
+            "4. Update your self-model:\n"
+            "   - Use self_model_update to set current_mood based on interaction sentiment.\n"
+            "   - Use self_skill_update for any skills you demonstrated or learned\n"
+            "     (e.g., +0.05 for successfully researching a complex topic, +0.1 for a breakthrough).\n"
+            "   - Use self_goal_update to set or update goals for improvement.\n"
+            "   - Use self_model_update to update capability_assessment with honest self-critique.\n"
+            "5. Call self_model_update with last_reflection_at set to the current timestamp.\n\n"
             "## Phase 1 — Orient\n"
             "Call dream_get_stats to see what you're working with.\n"
             "Call dream_list_memories to review the newest memories (limit=30). Get a feel for recent activity.\n\n"
@@ -316,14 +312,26 @@ class DreamModule(HeartbeatModule):
             "## Phase 5 — Prune\n"
             "Delete memories that are: clearly wrong, fully superseded, trivially unimportant, or irrelevant noise.\n"
             "Always provide a reason when calling dream_delete_memory.\n\n"
-            "## Phase 6 — Report\n"
+            "## Phase 6 — Importance Consolidation via Replay\n"
+            "This is the consolidation step — strengthen high-value memories so they persist long-term.\n"
+            "1. Call dream_find_important_memories (limit=10) to find memories with high cross-reference scores.\n"
+            "   Cross-reference score = (concept relationship count + 1) × importance.\n"
+            "   These are the most connected, semantically rich memories.\n"
+            "2. For each memory with a cross_ref_score above 1.5, call dream_replay_memory on it.\n"
+            "   This re-encodes the embedding vector (fresh signal in vector space) and boosts importance by ×1.15.\n"
+            "   Skip memories with importance already at 1.0 (they're fully consolidated).\n"
+            "3. Replay at least the top 3-5 high-score memories. More if they all score high.\n"
+            "Goal: Important, well-connected knowledge gets reinforced in semantic space.\n"
+            "Unimportant memories are left alone — the grooming/pruning phases will naturally remove them later.\n\n"
+            "## Phase 7 — Report\n"
             "Finish with a plain-text summary:\n"
             "- N memories merged (list the kept IDs)\n"
             "- N memories deleted (list the reasons briefly)\n"
             "- N memories updated (what changed)\n"
+            "- N memories replayed (list the IDs and new importance scores)\n"
             "- Any notable patterns observed\n\n"
             "Be thorough but efficient. Do not delete anything you're uncertain about — when in doubt, update instead of delete.\n"
-            "The goal is a cleaner, more accurate, non-redundant memory graph."
+            "The goal is a cleaner, more accurate, non-redundant memory graph with high-value knowledge reinforced."
         )
 
         logging.info("[dream] Dream starting...")
@@ -358,6 +366,7 @@ class DreamModule(HeartbeatModule):
                     model=model_name,
                     initial_response=response,
                     max_calls=self._max_tool_calls,
+                    max_rounds=self._max_tool_rounds,
                 )
 
             elapsed = time.time() - start
@@ -367,7 +376,7 @@ class DreamModule(HeartbeatModule):
             )
             # Mark completion only after success so a crash mid-dream
             # doesn't skip unprocessed memories on next restart.
-            await self._set_state("last_dream_at", time.time())
+            await self._state.set("last_dream_at", time.time())
 
             event_bus = g_data.get("event_bus")
             if event_bus:
@@ -375,6 +384,11 @@ class DreamModule(HeartbeatModule):
                 # Always reset idle timers so she doesn't immediately re-dream —
                 # even an empty-summary dream counts as activity.
                 await event_bus.publish(Event("activity.recorded", {}))
+                # Fire self.reflected event with dream summary
+                await event_bus.publish(Event("self.reflected", {
+                    "summary": summary,
+                    "elapsed_seconds": round(elapsed, 1),
+                }))
                 # Only surface to chat context if there's actually something to say.
                 if summary:
                     await event_bus.publish(Event("task.completed", {

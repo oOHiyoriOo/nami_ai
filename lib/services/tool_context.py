@@ -1,8 +1,8 @@
 """
 tool_context.py — ToolContext: decouples tool loading from the chat request lifecycle.
 
-Provides ToolContext, a standalone callable that bundles tools, provider-safe
-schemas, and a name→callable map for a single operation context.
+Provides ToolContext, a standalone callable that bundles tools and provider-safe
+schemas for a single operation context.
 
 Two factory classmethods:
 - for_chat()      — Full tool set (current behaviour, backward compatible)
@@ -10,7 +10,6 @@ Two factory classmethods:
 """
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from lib.utils.dynamic_loader import ToolLoader
@@ -23,7 +22,6 @@ class ToolContext:
 
     tools: list[dict] = field(default_factory=list)
     schemas: list[dict] = field(default_factory=list)
-    tool_map: dict[str, Callable] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # Factory classmethods
@@ -34,9 +32,10 @@ class ToolContext:
         """Load the full chat tool set (current behaviour, backward compatible).
 
         Includes local tools loaded via ToolLoader plus MCP tools if configured.
+        Excludes dream_ and research_ tools (loaded only by their respective services).
         """
         loader = ToolLoader()
-        all_tools = await loader.load_tools()
+        all_tools = await loader.load_tools(exclude_prefixes=["dream_", "research_"])
 
         # Load MCP tools
         try:
@@ -54,8 +53,8 @@ class ToolContext:
         """Load heartbeat-appropriate tools filtered by module-declared categories.
 
         Reads ``heartbeat.modules.<module_name>.tools`` from config to determine
-        which tool categories are permitted.  Also includes dream tools (normally
-        excluded by ToolLoader) so memory-grooming and auto-dream can use them.
+        which tool categories are permitted.  Loads all tools (including dream_
+        and research_ prefixed ones) since heartbeat modules may need them.
 
         Returns an empty ToolContext when no categories are declared (fail-safe).
         """
@@ -71,16 +70,9 @@ class ToolContext:
             )
             return cls._from_tools([])
 
-        # Load standard tools (chat tools)
+        # Load all tools (no exclusions — heartbeat modules get the full set)
         loader = ToolLoader()
-        all_tools = await loader.load_tools()
-
-        # Load dream tools (excluded from ToolLoader by name prefix)
-        try:
-            from OllamaTools.dream_tools import get_tool as get_dream_tools
-            all_tools.extend(list(get_dream_tools()))
-        except Exception as e:
-            logging.warning(f"[tool_context] Failed to load dream tools: {e}")
+        all_tools = await loader.load_tools(exclude_prefixes=[])
 
         # Filter by allowed categories
         filtered = [t for t in all_tools if _matches_categories(t, allowed)]
@@ -100,12 +92,7 @@ class ToolContext:
     def _from_tools(tools: list[dict]) -> "ToolContext":
         """Build a ToolContext from a raw tool list."""
         schemas = _strip_meta(tools)
-        tool_map = {
-            t["function"]["name"]: t["func"]
-            for t in tools
-            if "func" in t and t.get("func")
-        }
-        return ToolContext(tools=tools, schemas=schemas, tool_map=tool_map)
+        return ToolContext(tools=tools, schemas=schemas)
 
 
 # ------------------------------------------------------------------

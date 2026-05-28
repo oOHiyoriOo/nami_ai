@@ -92,10 +92,8 @@ class MCPClient:
         """
         if transport == "stdio":
             return await self._connect_server_stdio(name, command, args, env, reconnect, cwd)
-        elif transport == "http":
-            return await self._connect_server_http(name, url, reconnect)
-        elif transport == "sse":
-            return await self._connect_server_sse(name, url, reconnect)
+        elif transport in ("http", "sse"):
+            return await self._connect_server_remote(name, url, transport, reconnect)
         else:
             raise ValueError(f"Unknown transport: {transport}")
 
@@ -296,12 +294,12 @@ class MCPClient:
             "params": {"name": tool_name, "arguments": arguments},
         }
 
-    async def _connect_server_http(
-        self, name: str, url: str | None, reconnect: bool = False,
+    async def _connect_server_remote(
+        self, name: str, url: str | None, transport: str, reconnect: bool = False,
     ) -> MCPServer:
-        """Connect to an MCP server via HTTP JSON-RPC POST."""
+        """Connect to an MCP server via HTTP/SSE JSON-RPC POST."""
         if not url:
-            raise ValueError(f"MCP HTTP server '{name}' has no URL configured")
+            raise ValueError(f"MCP {transport.upper()} server '{name}' has no URL configured")
 
         import aiohttp
         session = aiohttp.ClientSession()
@@ -314,7 +312,7 @@ class MCPClient:
                 if resp.status != 200:
                     body = await resp.text()
                     raise Exception(
-                        f"MCP HTTP server '{name}' returned {resp.status}: {body[:200]}"
+                        f"MCP {transport.upper()} server '{name}' returned {resp.status}: {body[:200]}"
                     )
                 init_response = await resp.json()
 
@@ -323,7 +321,7 @@ class MCPClient:
                     f"MCP server initialization failed: {init_response['error']}"
                 )
 
-            logging.info(f"MCP HTTP server '{name}' initialized")
+            logging.info(f"MCP {transport.upper()} server '{name}' initialized")
 
             # List tools
             tools_id = self._next_id()
@@ -332,7 +330,7 @@ class MCPClient:
                 if resp.status != 200:
                     body = await resp.text()
                     raise Exception(
-                        f"MCP HTTP server '{name}' tools/list returned {resp.status}: {body[:200]}"
+                        f"MCP {transport.upper()} server '{name}' tools/list returned {resp.status}: {body[:200]}"
                     )
                 tools_response = await resp.json()
 
@@ -344,7 +342,7 @@ class MCPClient:
 
             server = MCPServer(
                 name=name,
-                transport="http",
+                transport=transport,
                 tools=tools,
                 url=url,
                 _session=session,
@@ -352,76 +350,7 @@ class MCPClient:
             )
             self.servers[name] = server
             logging.info(
-                f"Loaded {len(tools)} tools from MCP HTTP server '{name}'"
-            )
-            return server
-
-        except Exception:
-            await session.close()
-            raise
-
-    async def _connect_server_sse(
-        self, name: str, url: str | None, reconnect: bool = False,
-    ) -> MCPServer:
-        """Connect to an MCP server via SSE (HTTP POST → SSE stream).
-
-        For initialization and tool listing we use the same HTTP POST approach
-        as the http transport.  The SSE streaming applies to tool *calls*, which
-        are handled in ``_call_tool_http`` based on the transport type.
-        """
-        if not url:
-            raise ValueError(f"MCP SSE server '{name}' has no URL configured")
-
-        import aiohttp
-        session = aiohttp.ClientSession()
-
-        try:
-            # Initialize (same POST as HTTP)
-            init_id = self._next_id()
-            async with session.post(url, json=self._build_initialize_request(init_id),
-                                     timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    raise Exception(
-                        f"MCP SSE server '{name}' returned {resp.status}: {body[:200]}"
-                    )
-                init_response = await resp.json()
-
-            if "error" in init_response:
-                raise Exception(
-                    f"MCP server initialization failed: {init_response['error']}"
-                )
-
-            logging.info(f"MCP SSE server '{name}' initialized")
-
-            # List tools
-            tools_id = self._next_id()
-            async with session.post(url, json=self._build_tools_list_request(tools_id),
-                                     timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    raise Exception(
-                        f"MCP SSE server '{name}' tools/list returned {resp.status}: {body[:200]}"
-                    )
-                tools_response = await resp.json()
-
-            if "error" in tools_response:
-                raise Exception(f"Failed to list tools: {tools_response['error']}")
-
-            mcp_tools = tools_response.get("result", {}).get("tools", [])
-            tools = self._convert_mcp_tools(name, mcp_tools)
-
-            server = MCPServer(
-                name=name,
-                transport="sse",
-                tools=tools,
-                url=url,
-                _session=session,
-                _reconnect=reconnect,
-            )
-            self.servers[name] = server
-            logging.info(
-                f"Loaded {len(tools)} tools from MCP SSE server '{name}'"
+                f"Loaded {len(tools)} tools from MCP {transport.upper()} server '{name}'"
             )
             return server
 
@@ -503,6 +432,28 @@ class MCPClient:
     # Tool conversion (shared across transports)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _make_mcp_tool_wrapper(server: str, tool: str):
+        """Create an async wrapper function that calls an MCP server tool."""
+
+        async def mcp_tool_wrapper(**kwargs):
+            from lib.global_registry import g_data
+            from OllamaTools import tool_success, tool_error
+
+            try:
+                mcp_client = g_data.get("mcp_client")
+                if not mcp_client:
+                    return tool_error("MCP client not initialized")
+
+                result = await mcp_client.call_tool(server, tool, kwargs)
+                return tool_success(result, server=server, tool=tool)
+
+            except Exception as e:
+                logging.error(f"MCP tool error ({server}/{tool}): {e}")
+                return tool_error(str(e), server=server, tool=tool)
+
+        return mcp_tool_wrapper
+
     def _convert_mcp_tools(self, server_name: str, mcp_tools: list[dict]) -> list[dict]:
         """
         Convert MCP tool definitions to Nami AI tool format.
@@ -519,26 +470,6 @@ class MCPClient:
         for mcp_tool in mcp_tools:
             tool_name = mcp_tool['name']
 
-            def make_wrapper(server: str, tool: str):
-                async def mcp_tool_wrapper(**kwargs):
-                    """Wrapper that calls MCP server tool."""
-                    from lib.global_registry import g_data
-                    from OllamaTools import tool_success, tool_error
-
-                    try:
-                        mcp_client = g_data.get("mcp_client")
-                        if not mcp_client:
-                            return tool_error("MCP client not initialized")
-
-                        result = await mcp_client.call_tool(server, tool, kwargs)
-                        return tool_success(result, server=server, tool=tool)
-
-                    except Exception as e:
-                        logging.error(f"MCP tool error ({server}/{tool}): {e}")
-                        return tool_error(str(e), server=server, tool=tool)
-
-                return mcp_tool_wrapper
-
             converted.append({
                 "type": "function",
                 "function": {
@@ -546,7 +477,7 @@ class MCPClient:
                     "description": mcp_tool.get('description', f'MCP tool: {tool_name}'),
                     "parameters": mcp_tool.get('inputSchema', {"type": "object", "properties": {}})
                 },
-                "func": make_wrapper(server_name, tool_name),
+                "func": self._make_mcp_tool_wrapper(server_name, tool_name),
                 "_mcp_server": server_name,
                 "_mcp_tool_name": tool_name
             })

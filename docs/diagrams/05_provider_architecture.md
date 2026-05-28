@@ -140,7 +140,7 @@ graph TB
     Check1 -->|Yes| Add1[Add name]
     Check1 -->|No| Skip1[Skip]
 
-    Tools --> Check2{include_tool_calls?}
+    Tools --> Check2{Has tool_calls?}
     Check2 -->|Yes| Add2[Add tool_calls]
     Check2 -->|No| Skip2[Skip]
 

@@ -8,6 +8,25 @@ for each other's instances.
 
 This is additive: global_registry stays for now. The EventBus sits alongside
 it as a decoupled communication channel.
+
+Known event types
+-----------------
+system.startup_complete   — Published once after all services are wired.
+system.shutdown           — Published before teardown begins.
+system.reload_tools       — Full hot-reload of all tools (ToolContext.for_chat).
+system.module_changed     — Selective hot-reload for a single module.
+                            data.module_path identifies the module (e.g.
+                            ``lib.services.context_builder``). Dispatched by
+                            HotReloadRegistry to the registered handler.
+                            data.file_path is the absolute path to the changed
+                            file (optional, used by single-tool reload).
+memory.extracted          — A new memory was extracted from a conversation.
+task.completed            — A scheduled task finished execution.
+task.due                  — A scheduled task is due for execution.
+message.received          — An inbound message arrived via an adapter.
+message.send              — A tool/trigger wants to send an outbound message.
+response.ready            — AI response is ready to be sent to adapters.
+activity.recorded         — User interaction occurred (resets idle timers).
 """
 
 import asyncio

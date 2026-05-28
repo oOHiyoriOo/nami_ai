@@ -66,7 +66,7 @@ class AIPipelineHandler:
             self._global_lock.release()
 
     async def _run_pipeline_for_message(self, data: dict) -> None:
-        """Inner pipeline logic — called while holding the conversation lock.
+        """Orchestrate a single pipeline run from a ``message.received`` event.
 
         Supports per-event model and settings overrides so that REST API
         callers can specify a different model or disable personality without
@@ -82,57 +82,21 @@ class AIPipelineHandler:
         conversation_id: str = data.get("conversation_id", "")
 
         try:
-            cfg = g_data.get("cfg")
-            providers_config = cfg.data.get("providers", {}) if cfg else {}
-
-            # Resolve provider — honour per-event model override (e.g. from REST)
-            model_ref: str | None = data.get("model")
-            if model_ref:
-                from lib.utils.model_string import parse_model_string
-                try:
-                    default_provider, default_model = parse_model_string(model_ref)
-                    provider = self._get_provider(default_provider, providers_config)
-                    if not provider:
-                        raise ValueError(f"provider '{default_provider}' unavailable")
-                except (ValueError, Exception) as exc:
-                    logging.warning(
-                        "[pipeline_handler] Invalid model override '%s' (%s) — falling back to default",
-                        model_ref, exc,
-                    )
-                    model_ref = None
-
-            if not model_ref:
-                resolved = self._resolve_provider_config()
-                if not resolved:
-                    return
-                default_provider, default_model, provider = resolved
-                model_ref = f"{default_provider}/{default_model}"
+            resolved = self._resolve_pipeline_provider(data)
+            if not resolved:
+                return
+            model_name, provider, model_ref = resolved
 
             user_id: str = data.get("user_id", "")
             content: str = data.get("content", "")
             history: list = data.get("history", [])
 
-            # Inject adapter-specific capability tools for this conversation
             ws_server = g_data.get("adapter_ws_server")
             adapter_tools = ws_server.get_adapter_tools(adapter_name) if ws_server else []
 
-            # Status callbacks: publish event-bus events so the ws_server can forward
-            # liveness pings to the adapter (resets its response timeout).
-            async def _on_tool_start(tool_name: str) -> None:
-                if adapter_name:
-                    await self._event_bus.publish(Event(
-                        type="status.update",
-                        data={"adapter_name": adapter_name, "conversation_id": conversation_id,
-                              "text": f"Using {tool_name}…"},
-                    ))
-
-            async def _on_tool_done() -> None:
-                if adapter_name:
-                    await self._event_bus.publish(Event(
-                        type="status.update",
-                        data={"adapter_name": adapter_name, "conversation_id": conversation_id,
-                              "text": "Thinking…"},
-                    ))
+            on_tool_start, on_tool_done = self._create_tool_status_callbacks(
+                adapter_name, conversation_id,
+            )
 
             pipeline_request = AIPipelineRequest(
                 messages=history,
@@ -143,7 +107,6 @@ class AIPipelineHandler:
                 channel_name=data.get("channel_name"),
                 guild_name=data.get("guild_name"),
                 is_dm=data.get("is_dm", False),
-                # Per-event overrides (REST API or future adapter extensions)
                 enable_memory=data.get("enable_memory", True),
                 enable_personality=data.get("enable_personality", True),
                 think_override=data.get("think_override"),
@@ -152,8 +115,6 @@ class AIPipelineHandler:
                 additional_tools=adapter_tools or None,
             )
 
-            # Signal adapter to show typing indicator only right before the AI call —
-            # not during setup/provider resolution, which avoids false-positive typing.
             if adapter_name and conversation_id:
                 await self._event_bus.publish(Event(
                     type="typing.start",
@@ -163,15 +124,14 @@ class AIPipelineHandler:
             result = await ai_pipeline.run(
                 pipeline_request,
                 provider=provider,
-                model_name=default_model,
+                model_name=model_name,
                 full_model_ref=model_ref,
                 user_name=data.get("user_name", user_id),
                 original_user_msg=content,
-                on_tool_start=_on_tool_start,
-                on_tool_done=_on_tool_done,
+                on_tool_start=on_tool_start,
+                on_tool_done=on_tool_done,
             )
 
-            # Strip self-prefix if the LLM mirrors the [Nami]: format
             response_content = re.sub(
                 r'^\s*\[n?ami\]\s*:\s*', '', result.content, flags=re.IGNORECASE
             )
@@ -191,7 +151,6 @@ class AIPipelineHandler:
                 "[pipeline_handler] Error processing message (adapter=%s, conv=%s)",
                 adapter_name, conversation_id, exc_info=True,
             )
-            # Route error through event bus — ws_server handles cache.set_error and delivery
             await self._event_bus.publish(Event(
                 type="response.ready",
                 data={
@@ -235,6 +194,16 @@ class AIPipelineHandler:
             )
             return
 
+        event_data = {
+            "task_id": task_id,
+            "task_type": "scheduled",
+            "title": task_title,
+            "adapter": adapter,
+            "conversation_id": conversation_id,
+            "recurrence": data.get("recurrence"),
+            "ttl_runs": data.get("ttl_runs"),
+        }
+
         try:
             result_text = await self._execute_task_pipeline(
                 prompt=prompt,
@@ -243,41 +212,24 @@ class AIPipelineHandler:
                 context_messages=context_messages,
                 adapter=adapter,
             )
-            await self._event_bus.publish(Event(
-                type="task.completed",
-                data={
-                    "task_id": task_id,
-                    "task_type": "scheduled",
-                    "title": task_title,
-                    "result": result_text,
-                    "success": True,
-                    "adapter": adapter,
-                    "conversation_id": conversation_id,
-                    "recurrence": data.get("recurrence"),
-                    "ttl_runs": data.get("ttl_runs"),
-                },
-            ))
+            event_data["success"] = True
+            event_data["result"] = result_text
         except Exception as e:
             logging.error(
                 f"[pipeline_handler] task {task_id!r} failed: {e}",
                 exc_info=True,
             )
-            await self._event_bus.publish(Event(
-                type="task.completed",
-                data={
-                    "task_id": task_id,
-                    "task_type": "scheduled",
-                    "title": task_title,
-                    "result": str(e),
-                    "success": False,
-                    "adapter": adapter,
-                    "conversation_id": conversation_id,
-                    "recurrence": data.get("recurrence"),
-                    "ttl_runs": data.get("ttl_runs"),
-                },
-            ))
+            event_data["success"] = False
+            event_data["result"] = str(e)
         finally:
             self._global_lock.release()
+
+        await self._event_bus.publish(Event(
+            type="task.completed",
+            data=event_data,
+        ))
+
+
     async def _execute_task_pipeline(
         self,
         prompt: str,
@@ -346,6 +298,67 @@ class AIPipelineHandler:
             adapter, conversation_id,
         )
         return [{"role": "user", "content": prompt}]
+
+    def _resolve_pipeline_provider(self, data: dict) -> tuple[str, Any, str] | None:
+        """Resolve provider/model from event data, honouring per-event overrides.
+
+        Returns ``(model_name, provider_instance, full_model_ref)`` or ``None``
+        if configuration is unavailable or resolution fails completely.
+        """
+        cfg = g_data.get("cfg")
+        providers_config = cfg.data.get("providers", {}) if cfg else {}
+
+        model_ref: str | None = data.get("model")
+        if model_ref:
+            from lib.utils.model_string import parse_model_string
+            try:
+                provider_name, model_name = parse_model_string(model_ref)
+                provider = self._get_provider(provider_name, providers_config)
+                if not provider:
+                    raise ValueError(f"provider '{provider_name}' unavailable")
+                return (model_name, provider, model_ref)
+            except (ValueError, Exception) as exc:
+                logging.warning(
+                    "[pipeline_handler] Invalid model override '%s' (%s) — falling back to default",
+                    model_ref, exc,
+                )
+
+        resolved = self._resolve_provider_config()
+        if not resolved:
+            return None
+        provider_name, model_name, provider = resolved
+        return (model_name, provider, f"{provider_name}/{model_name}")
+
+    def _create_tool_status_callbacks(self, adapter_name: str, conversation_id: str):
+        """Create tool-start / tool-done callbacks that publish ``status.update`` events.
+
+        These are simple EventBus wrappers: each callback fires a liveness ping
+        so the WS server can forward activity to the adapter and reset its response
+        timeout.
+        """
+        async def _on_tool_start(tool_name: str) -> None:
+            if adapter_name:
+                await self._event_bus.publish(Event(
+                    type="status.update",
+                    data={
+                        "adapter_name": adapter_name,
+                        "conversation_id": conversation_id,
+                        "text": f"Using {tool_name}…",
+                    },
+                ))
+
+        async def _on_tool_done() -> None:
+            if adapter_name:
+                await self._event_bus.publish(Event(
+                    type="status.update",
+                    data={
+                        "adapter_name": adapter_name,
+                        "conversation_id": conversation_id,
+                        "text": "Thinking…",
+                    },
+                ))
+
+        return _on_tool_start, _on_tool_done
 
     def _resolve_provider_config(self) -> tuple[str, str, Any] | None:
         """Read default provider/model config and return resolved tuple.

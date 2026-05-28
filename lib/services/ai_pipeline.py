@@ -1,14 +1,9 @@
 """
 ai_pipeline.py — Shared AI request pipeline for all adapters and the REST API.
 
-Encapsulates the full AI interaction flow:
-  1. Context building (personality + memories)
-  2. Vision preprocessing
-  3. Thinking mode resolution (trigger words / explicit flag)
-  4. Provider chat call
-  5. Tool execution loop
-  6. Model cache recording
-  7. Fire-and-forget memory extraction
+Encapsulates the full AI interaction flow: context building, vision
+preprocessing, thinking mode resolution, provider call, tool execution,
+model cache recording, and fire-and-forget memory extraction.
 
 New adapters only need to prepare an ``AIPipelineRequest`` and call
 ``ai_pipeline.run()``.  Provider resolution is intentionally left to the
@@ -25,6 +20,7 @@ from typing import Any, Awaitable, Callable
 from lib.ai_providers import Message
 from lib.global_registry import g_data
 from lib.services.tool_executor import execute_tool_loop
+from lib.services.tool_context import _strip_meta
 from lib.services.memory_processor import process_memories
 from lib.utils.retry import with_retry
 
@@ -141,8 +137,7 @@ class AIPipeline:
         original_user_msg: str = "",
         timestamp=None,
     ) -> AIPipelineResult:
-        """
-        Execute the full AI pipeline for a single conversation turn.
+        """Execute the full AI pipeline for a single conversation turn.
 
         Args:
             request:          Platform-agnostic input.
@@ -159,11 +154,38 @@ class AIPipeline:
         Returns:
             AIPipelineResult with content, optional thinking, and the model used.
         """
-        cfg = g_data.get("cfg")
+        enhanced = await self._build_context(request, user_name)
+        provider_messages = self._to_provider_messages(enhanced, request.image_urls)
+        provider_messages = await self._preprocess_vision(provider_messages, provider, model_name)
+        provider_tools, raw_tools = self._resolve_tools(request)
+        use_thinking, active_model = await self._resolve_thinking(
+            model_name, original_user_msg, request, on_thinking_mode,
+        )
+        response = await self._call_provider(
+            provider, provider_messages, provider_tools, active_model, use_thinking, request,
+        )
+        response, tool_placeholders = await self._execute_tools(
+            response, provider, provider_messages, raw_tools, active_model, request,
+            on_tool_start, on_tool_done,
+        )
+        self._record_model_cache(full_model_ref)
+        self._broadcast_activity()
+        self._extract_memories(
+            response, request, original_user_msg, user_name, bool(tool_placeholders), timestamp,
+        )
+        return AIPipelineResult(
+            content=response.content or "",
+            thinking=response.thinking,
+            model_used=active_model,
+            tool_messages=tool_placeholders,
+        )
 
-        # --- 1. Context building (personality + memories) ---
+    async def _build_context(
+        self, request: AIPipelineRequest, user_name: str | None,
+    ) -> list[dict]:
+        """Build enriched message context with personality and memories."""
         context_builder = g_data.get("context_builder")
-        enhanced = await context_builder.build_context(
+        return await context_builder.build_context(
             messages=request.messages,
             user_id=request.user_id,
             conversation_id=request.conversation_id,
@@ -176,32 +198,40 @@ class AIPipeline:
             user_name=user_name,
         )
 
-        # --- 2. Convert to provider Messages; inject images into last user msg ---
-        provider_messages = self._to_provider_messages(enhanced, request.image_urls)
-
-        # --- 3. Vision preprocessing ---
+    async def _preprocess_vision(
+        self, provider_messages: list[Message], provider, model_name: str,
+    ) -> list[Message]:
+        """Run vision preprocessing if a vision service is registered."""
         vision_service = g_data.get("vision_service")
-        if vision_service:
-            # Ensure provider capabilities are queried for this model before checking
-            provider.ensure_capabilities(model_name)
-            provider_messages = await vision_service.preprocess_messages(
-                provider_messages, provider.supports_vision()
-            )
+        if not vision_service:
+            return provider_messages
+        provider.ensure_capabilities(model_name)
+        return await vision_service.preprocess_messages(
+            provider_messages, provider.supports_vision(),
+        )
 
-        # --- 4. Resolve tools ---
+    def _resolve_tools(
+        self, request: AIPipelineRequest,
+    ) -> tuple[list[dict] | None, list]:
+        """Resolve global + adapter tools into provider schemas and raw executable tools."""
         raw_tools = list(g_data.get("tools") or [])
         if request.additional_tools:
             raw_tools = raw_tools + request.additional_tools
         if request.provider_tool_schemas is not None:
-            # Client-provided schemas — only these are sent to the AI,
-            # but global tools still handle execution of any matching calls.
             provider_tools = request.provider_tool_schemas or None
         else:
-            provider_tools = (
-                [{k: v for k, v in t.items() if k != "func"} for t in raw_tools] or None
-            )
+            provider_tools = _strip_meta(raw_tools) or None
+        return provider_tools, raw_tools
 
-        # --- 5. Thinking mode ---
+    async def _resolve_thinking(
+        self,
+        model_name: str,
+        original_user_msg: str,
+        request: AIPipelineRequest,
+        on_thinking_mode: Callable[[], Awaitable[None]] | None,
+    ) -> tuple[bool, str]:
+        """Determine thinking mode and fire the callback if active."""
+        cfg = g_data.get("cfg")
         thinking_cfg = cfg.data.get("thinking", {}) if cfg else {}
         use_thinking, active_model = resolve_thinking_mode(
             content=original_user_msg,
@@ -213,83 +243,113 @@ class AIPipeline:
             logging.info(f"[pipeline] Thinking mode → '{active_model}'")
             if on_thinking_mode:
                 await on_thinking_mode()
+        return use_thinking, active_model
 
-        # --- 6. Provider call (with retry + backoff) ---
-        chat_kwargs = {"model": active_model}
+    async def _call_provider(
+        self,
+        provider,
+        provider_messages: list[Message],
+        provider_tools: list[dict] | None,
+        active_model: str,
+        use_thinking: bool,
+        request: AIPipelineRequest,
+    ):
+        """Call the AI provider with retry + exponential backoff."""
+        chat_kwargs: dict[str, Any] = {"model": active_model}
         if use_thinking:
             chat_kwargs["think"] = True
         if request.options:
             chat_kwargs["options"] = request.options
+        cfg = g_data.get("cfg")
         retry_attempts = cfg.data.get("bot", {}).get("retry_max_attempts", 5) if cfg else 5
-        response = await with_retry(
+        return await with_retry(
             lambda: provider.chat(provider_messages, provider_tools, **chat_kwargs),
             max_attempts=retry_attempts,
             label=f"provider.chat({active_model})",
         )
 
-        # --- 7. Tool execution loop ---
-        used_tools = False
-        tool_placeholders: list[dict] = []
-        if response.tool_calls and raw_tools:
-            used_tools = True
-            max_tool_calls = cfg.data.get("bot", {}).get("max_tool_calls", 10) if cfg else 10
-            # Inject request context so tools can access user_id / conversation_id
-            # without being passed as explicit parameters.
-            _ctx_token = pipeline_ctx.set({
-                "user_id": request.user_id or "",
-                "conversation_id": request.conversation_id or "",
-            })
-            try:
-                response, tool_msgs = await execute_tool_loop(
-                    provider=provider,
-                    messages=provider_messages,
-                    tools=raw_tools,
-                    model=active_model,
-                    initial_response=response,
-                    max_calls=max_tool_calls,
-                    on_tool_start=on_tool_start,
-                    on_tool_done=on_tool_done,
-                )
-            finally:
-                pipeline_ctx.reset(_ctx_token)
+    async def _execute_tools(
+        self,
+        response,
+        provider,
+        provider_messages: list[Message],
+        raw_tools: list,
+        active_model: str,
+        request: AIPipelineRequest,
+        on_tool_start: Callable[[str], Awaitable[None]] | None,
+        on_tool_done: Callable[[], Awaitable[None]] | None,
+    ) -> tuple:
+        """Run the tool execution loop if the provider returned tool calls."""
+        if not response.tool_calls or not raw_tools:
+            return response, []
+        cfg = g_data.get("cfg")
+        bot_cfg = cfg.data.get("bot", {}) if cfg else {}
+        max_tool_calls = bot_cfg.get("max_tool_calls", 5)
+        max_tool_rounds = bot_cfg.get("max_tool_rounds", 10)
+        error_escalation_threshold = bot_cfg.get("tool_error_escalation_threshold", 3)
+        _ctx_token = pipeline_ctx.set({
+            "user_id": request.user_id or "",
+            "conversation_id": request.conversation_id or "",
+        })
+        try:
+            response, tool_msgs = await execute_tool_loop(
+                provider=provider,
+                messages=provider_messages,
+                tools=raw_tools,
+                model=active_model,
+                initial_response=response,
+                max_calls=max_tool_calls,
+                max_rounds=max_tool_rounds,
+                error_escalation_threshold=error_escalation_threshold,
+                on_tool_start=on_tool_start,
+                on_tool_done=on_tool_done,
+            )
+        finally:
+            pipeline_ctx.reset(_ctx_token)
+        tool_placeholders = [
+            {"role": m.role, "content": m.content, "tool_call_id": m.tool_call_id}
+            for m in tool_msgs
+        ]
+        return response, tool_placeholders
 
-            # execute_tool_loop returns placeholder messages (content stored in ToolResponseLog).
-            tool_placeholders = [
-                {"role": m.role, "content": m.content, "tool_call_id": m.tool_call_id}
-                for m in tool_msgs
-            ]
-
-        # --- 8. Model cache ---
+    def _record_model_cache(self, full_model_ref: str) -> None:
+        """Record successful model usage in the model cache."""
+        if not full_model_ref:
+            return
         model_cache = g_data.get("model_cache")
-        if model_cache and full_model_ref:
+        if model_cache:
             model_cache.record_success(full_model_ref)
 
-        # --- 8b. Broadcast activity to dream / curiosity / heartbeat via event bus ---
+    def _broadcast_activity(self) -> None:
+        """Fire-and-forget broadcast of activity to the event bus."""
         event_bus = g_data.get("event_bus")
         if event_bus:
             from lib.services.event_bus import Event
             asyncio.create_task(event_bus.publish(Event("activity.recorded", {})))
 
-        # --- 9. Memory extraction (fire-and-forget) ---
+    def _extract_memories(
+        self,
+        response,
+        request: AIPipelineRequest,
+        original_user_msg: str,
+        user_name: str | None,
+        used_tools: bool,
+        timestamp,
+    ) -> None:
+        """Fire-and-forget memory extraction from the completed turn."""
         content = response.content or ""
-        if request.enable_memory and original_user_msg and content and content != "<ignore>":
-            turn_content = f"User: {original_user_msg}\nAssistant: {content}"
-            asyncio.create_task(
-                process_memories(
-                    message_content=turn_content,
-                    user_id=request.user_id,
-                    user_name=user_name or request.user_id or "unknown",
-                    conversation_id=request.conversation_id or "",
-                    timestamp=timestamp,
-                    has_tool_calls=used_tools,
-                )
+        if not (request.enable_memory and original_user_msg and content and content != "<ignore>"):
+            return
+        turn_content = f"User: {original_user_msg}\nAssistant: {content}"
+        asyncio.create_task(
+            process_memories(
+                message_content=turn_content,
+                user_id=request.user_id,
+                user_name=user_name or request.user_id or "unknown",
+                conversation_id=request.conversation_id or "",
+                timestamp=timestamp,
+                has_tool_calls=used_tools,
             )
-
-        return AIPipelineResult(
-            content=content,
-            thinking=response.thinking,
-            model_used=active_model,
-            tool_messages=tool_placeholders,
         )
 
     @staticmethod

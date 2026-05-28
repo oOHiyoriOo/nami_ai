@@ -22,6 +22,7 @@ import time
 from lib.global_registry import g_data
 from lib.services.heartbeat_module import HeartbeatModule
 from lib.utils.ai_lock import acquire_ai_lock
+from lib.utils.sqlite_kv import SqliteKVStore
 
 _GROOMING_SYSTEM_PROMPT = (
     "You are performing Memory Grooming — a quiet maintenance pass over Nami's memory graph.\n"
@@ -86,6 +87,7 @@ class MemoryGrooming(HeartbeatModule):
         self._db_path = db_path
         self._db_initialised: bool = False
         self._last_report: dict = {}
+        self._state = SqliteKVStore(self._db_path, "grooming_state")
 
         # Parse per-module config
         hb_cfg = config.data.get("heartbeat", {}) if config else {}
@@ -99,6 +101,7 @@ class MemoryGrooming(HeartbeatModule):
         self._provider_name: str = mod_cfg.get("provider", "ollama")
         self._model_name: str = mod_cfg.get("model", "llama3.2")
         self._max_tool_calls: int = mod_cfg.get("max_tool_calls", 8)
+        self._max_tool_rounds: int = mod_cfg.get("max_tool_rounds", 10)
         self._auto_merge: bool = mod_cfg.get("auto_merge", False)
 
         logging.info(
@@ -131,7 +134,7 @@ class MemoryGrooming(HeartbeatModule):
         self._clear_gate_block("1")
 
         # Gate 2: enough new memories since last grooming
-        last_grooming_at = await self._get_state("last_grooming_at", default=0.0)
+        last_grooming_at = await self._state.get("last_grooming_at", default=0.0)
         new_count = await self._count_new_memories(memory_db, last_grooming_at)
         if new_count < self._min_new_memories:
             self._report_gate_block(
@@ -145,7 +148,7 @@ class MemoryGrooming(HeartbeatModule):
             f"[memory_grooming] All gates passed — {new_count} new memories since last run. "
             f"Starting grooming."
         )
-        await self._set_state("last_grooming_at", time.time())
+        await self._state.set("last_grooming_at", time.time())
         return True
 
     async def action(self) -> None:
@@ -238,6 +241,7 @@ class MemoryGrooming(HeartbeatModule):
                 model=self._model_name,
                 initial_response=response,
                 max_calls=self._max_tool_calls,
+                max_rounds=self._max_tool_rounds,
             )
 
         return self._parse_report(response.content or "")
@@ -345,28 +349,6 @@ class MemoryGrooming(HeartbeatModule):
                     key   TEXT PRIMARY KEY,
                     value TEXT
                 )"""
-            )
-            await db.commit()
-
-    async def _get_state(self, key: str, default: float = 0.0) -> float:
-        """Read a float value from grooming_state table."""
-        import aiosqlite
-
-        async with aiosqlite.connect(self._db_path) as db:
-            async with db.execute(
-                "SELECT value FROM grooming_state WHERE key = ?", (key,)
-            ) as cur:
-                row = await cur.fetchone()
-        return float(row[0]) if row else default
-
-    async def _set_state(self, key: str, value: float) -> None:
-        """Write a float value to grooming_state table."""
-        import aiosqlite
-
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO grooming_state (key, value) VALUES (?, ?)",
-                (key, str(value)),
             )
             await db.commit()
 

@@ -23,12 +23,14 @@ class DynamicLoader:
         self.directory = Path(directory)
         self.attribute_name = attribute_name
 
-    async def load_all(self, filter_fn: Callable[[Any], bool] | None = None) -> list[Any]:
+    async def load_all(self, filter_fn: Callable[[Any], bool] | None = None,
+                       exclude_prefixes: list[str] | None = None) -> list[Any]:
         """
         Load all modules from directory.
 
         Args:
             filter_fn: Optional filter function to validate loaded items
+            exclude_prefixes: Optional list of filename prefixes to skip
 
         Returns:
             List of loaded items
@@ -37,13 +39,13 @@ class DynamicLoader:
             logging.warning(f"Directory not found: {self.directory}")
             return []
 
+        _exclude = exclude_prefixes or []
         items = []
         python_files = [
             f for f in self.directory.iterdir()
             if f.suffix == '.py'
             and f.name != '__init__.py'
-            and not f.name.startswith('dream_')      # dream_tools.py is loaded only by DreamService
-            and not f.name.startswith('research_')   # research_tools.py is loaded only by CuriosityModule
+            and not any(f.name.startswith(p) for p in _exclude)
         ]
 
         for file_path in python_files:
@@ -97,24 +99,23 @@ class ToolLoader(DynamicLoader):
         """
         super().__init__(tools_directory, "get_tool")
 
-    async def load_tools(self) -> list[dict]:
+    async def load_tools(self, exclude_prefixes: list[str] | None = None) -> list[dict]:
         """
         Load all tools.
 
+        Args:
+            exclude_prefixes: Optional list of filename prefixes to skip
+
         Returns:
-            List of tool definitions (a single get_tool() may return a list)
+            List of tool definitions (every get_tool() returns list[dict])
         """
-        raw_tools = await self.load_all()
+        raw_tools = await self.load_all(exclude_prefixes=exclude_prefixes)
         tools = []
         for tool_fn in raw_tools:
             if not callable(tool_fn):
                 continue
             result = tool_fn()
-            # get_tool() may return a single dict or a list of dicts
-            if isinstance(result, list):
-                tools.extend(self._process_tool(t) for t in result)
-            else:
-                tools.append(self._process_tool(result))
+            tools.extend(self._process_tool(t) for t in result)
         return tools
 
     def _process_tool(self, tool: dict) -> dict:
@@ -146,15 +147,16 @@ class ToolLoader(DynamicLoader):
 
 
 # Convenience function for backward compatibility
-async def load_tools(client=None) -> list[dict]:
+async def load_tools(client=None, exclude_prefixes: list[str] | None = None) -> list[dict]:
     """
     Load tools from OllamaTools directory.
 
     Args:
         client: Optional client (for backward compatibility)
+        exclude_prefixes: Optional list of filename prefixes to skip
 
     Returns:
         List of tool definitions
     """
     loader = ToolLoader()
-    return await loader.load_tools()
+    return await loader.load_tools(exclude_prefixes=exclude_prefixes)
