@@ -293,6 +293,16 @@ class AppInitializer:
         else:
             logging.info("[curiosity] CuriosityModule disabled in config")
 
+        # Register custom bio+mood module (pluggable, lives in custom/)
+        try:
+            from custom import register_all
+            register_all(heartbeat, g_data, self.config)
+            logging.info("[custom] Bio+Mood module registered")
+        except ImportError:
+            logging.debug("[custom] Bio+Mood module not available (custom/ not found)")
+        except Exception as e:
+            logging.warning("[custom] Bio+Mood module failed to load: %s", e)
+
         # Initialize NotificationPipeline (proactive message delivery)
         from lib.services.notification_pipeline import NotificationPipeline
         notification_pipeline = NotificationPipeline(
