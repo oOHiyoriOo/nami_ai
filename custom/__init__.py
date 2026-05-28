@@ -130,10 +130,10 @@ def register_all(heartbeat, g_data, config) -> None:
                     parts.append(mood)
                 if id_hint:
                     parts.append(id_hint)
-                return "\n".join(parts) if parts else ""
+                return "\n".join(parts) if parts else "[No active mood — baseline state]"
             except Exception as e:
                 log.debug("mood hint error: %s", e)
-                return ""
+                return "[Mood data unavailable]"
 
         # Monkey-patch methods onto the NamiSystemPrompt instance
         sys_prompt.bio_state = _bio_state_hint
