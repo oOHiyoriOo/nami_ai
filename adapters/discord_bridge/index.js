@@ -471,6 +471,11 @@ function registerPendingResponse(conversationId, channel, discordMessage) {
       entry._armInactivity();
     },
 
+    /** Arm the initial inactivity timeout for the processing phase. */
+    _armInactivity() {
+      entry.inactivityTimer = setTimeout(() => entry._onInactivityTimeout(), INACTIVITY_TIMEOUT_MS);
+    },
+
     /** Called by handleWsMessage on status.update — resets inactivity clock. */
     resetInactivity() {
       if (entry.phase === 'processing') {

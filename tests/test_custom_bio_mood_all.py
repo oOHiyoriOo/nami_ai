@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import os
+import pytest
 import sys
 import tempfile
 import time
@@ -422,6 +423,7 @@ def test_pad_identity():
 # SUITE 8: Heartbeat Modules
 # ════════════════════════════════════════════════════════════════════
 
+@pytest.mark.asyncio
 async def test_heartbeat_modules():
     print("SUITE 8: Heartbeat Modules")
 

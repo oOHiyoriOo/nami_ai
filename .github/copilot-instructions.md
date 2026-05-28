@@ -22,6 +22,21 @@ docker-compose up -d
 
 The API server starts on port 11434 (Ollama-compatible) and automatically launches any enabled chat adapters (Discord, etc.) based on `config.yml`.
 
+## Testing
+
+```bash
+# Run all tests (test_*.py files in tests/)
+python run_tests.py
+
+# Run a single test file
+python -m pytest tests/test_context_builder.py -v
+
+# Run a single test function
+python -m pytest tests/test_context_builder.py::test_platform_prefix_extracted -v
+```
+
+Tests use **pytest** and aggressively mock heavy optional dependencies (neo4j, discord, sentence_transformers, torch, asyncssh, PIL). Each test file starts with `sys.path.insert(0, str(Path(__file__).parent.parent))` so imports resolve from the project root. `run_tests.py` wraps pytest with `-v --tb=short -q` and a 60s timeout per file.
+
 ## Architecture
 
 ### Provider/Model Format
@@ -80,6 +95,35 @@ All models use the format `<provider>/<model>` (e.g., `ollama/llama3.2`, `copilo
 - MCP tool names prefixed: `mcp_<server>_<tool>` (e.g., `mcp_filesystem_read_file`)
 - Transparent to AI - same execution path as local tools
 - Test with: `python test_mcp.py`
+
+**Heartbeat System** (`lib/services/heartbeat_service.py`):
+- Autonomous tick loop running on a configurable interval (default: 30s)
+- Pluggable modules implementing `HeartbeatModule` interface with `condition()` / `action()`
+- Modules each have their own cooldown and can trigger AI pipeline calls
+- Built-in modules: `system_health`, `memory_grooming`, `dream` gate, `curiosity`
+- Watchdog warns if no activity for `watchdog_threshold` seconds
+
+**Dream Module** (`lib/services/dream_service.py`):
+- Background memory consolidation triggered after `min_idle_hours` of silence
+- Uses its own provider/model for analysis (falls back to memory extraction config)
+- Deduplicates, fixes contradictions, prunes stale memories, promotes important ones
+- Gated by the heartbeat module (checks every 60s, only activates during night hours by default)
+
+**WebSocket Adapter Bridge** (`lib/services/adapter_ws_server.py`):
+- External adapters (Discord, WhatsApp) connect as persistent WS clients at `/api/ws/adapter`
+- Bidirectional event protocol: `capabilities.register`, `message.received`, `response.ready`, etc.
+- Config is pushed to adapters via `capabilities.ack` — adapters don't need their own config files
+- Adapters themselves live in `adapters/<platform>_bridge/` (separate processes, separate containers)
+
+**Sandbox** (`lib/services/sandbox_manager.py`):
+- Isolated Docker container for AI bash execution via SSH (asyncssh)
+- Foreground commands auto-background after `fg_timeout` seconds
+- Completed job output is surfaced in context on the next turn via `_add_completed_jobs()`
+- Job management tools: `get_job_output`, `list_jobs`, `kill_job`, `reset_sandbox`
+
+**EventBus** (`lib/services/event_bus.py`):
+- Decoupled pub/sub for internal events (tool call started/completed, message received, etc.)
+- Used by heartbeat watchdog, tool response logging, and notification pipeline
 
 ### Data Flow
 
@@ -184,9 +228,21 @@ MCP (Model Context Protocol) servers provide remote tools that integrate seamles
 
 **Single AI Identity**: All adapters communicate with the same AI personality. Memories are shared across platforms, but conversation histories are per-channel.
 
-**Tool Execution**: Providers handle tool calls differently. Base class provides `_extract_tool_from_xml()` for providers that embed tools in XML tags (e.g., some Ollama models).
+**Tool Safety Classification**: Each tool schema has a `"safe": True` or `"safe": False` field. Safe tools (read-only, no side effects) within the same round execute **concurrently** via `asyncio.gather()`. Unsafe tools (writes, shell, scheduler) run **sequentially** to avoid interleaved side effects. The tool loop also detects stuck loops: if the same tool+args fingerprint repeats `max_calls` times consecutively, the model is re-prompted once without tools.
+
+**Tool Return Format**: Tools must return JSON strings via `tool_success(data, **extra)` or `tool_error(message, **extra)` from `OllamaTools/__init__.py`. The response is parsed by `tool_executor.py` — `success=True/False` determines whether the result is fed back to the model.
+
+**Pipeline Context** (`ContextVar`): `lib/services/ai_pipeline.py` defines `pipeline_ctx: ContextVar[dict]` which is set before tool execution. Tools like `schedule_task` read `pipeline_ctx.get()` to get the caller's `user_id` / `conversation_id` without explicit parameter injection. ContextVar is asyncio-safe — each task gets its own copy.
+
+**Speaker Attribution**: `ai_pipeline_handler.py` prefixes stored user messages as `[DisplayName]: ...` before they reach the model, and strips a mirrored `[Nami]:` prefix from model output. This lets the LLM distinguish who said what in multi-user channels.
+
+**Thinking Mode**: Trigger words in `config.yml` → `thinking.trigger_words` (e.g., "think deeply") auto-enable a heavier model for the current turn. `think_override` can be set explicitly via the API. Vision preprocessing runs before model selection so images are available regardless of which model is used.
+
+**Vision Fallback**: When the chat model lacks vision capabilities, `vision_service.py` calls a dedicated vision model (e.g., `llama3.2-vision:11b`) to describe images, then injects the description as text into the chat context.
 
 **Provider Registry**: Providers are registered and instantiated on-demand. The model cache (`lib/services/model_cache.py`) tracks successfully validated models.
+
+**ToolContext** (`lib/services/tool_context.py`): Bundles tools, provider-safe schemas (stripped of `"func"` and `"safe"` fields), and a name→callable map. Two factories: `for_chat()` (full tool set) and `for_heartbeat()` (filtered by module-declared categories like `memory_read`, `memory_write`).
 
 **Neo4j Schema**: Memories stored as nodes with embeddings as vectors. Relationships track connections between memories, users, and concepts.
 
