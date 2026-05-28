@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "description": "Paths Nami is allowed to edit. All paths relative to project root. Glob patterns supported.",
+  "allow": [
+    {
+      "pattern": "OllamaTools/*.py",
+      "reason": "Tools reload via system.reload_tools event — no restart needed",
+      "reload": "system.reload_tools"
+    },
+    {
+      "pattern": "lib/services/heartbeat_modules/*.py",
+      "reason": "Individual heartbeat modules, independently reloadable",
+      "reload": "system.module_changed:heartbeat_modules"
+    },
+    {
+      "pattern": "lib/services/context_builder.py",
+      "reason": "Isolated context logic, no side effects on reload",
+      "reload": "system.module_changed:lib.services.context_builder"
+    },
+    {
+      "pattern": "lib/services/memory_extractor.py",
+      "reason": "Standalone service, reloadable",
+      "reload": "system.module_changed:lib.services.memory_extractor"
+    },
+    {
+      "pattern": "lib/services/memory_service.py",
+      "reason": "Standalone service, reloadable",
+      "reload": "system.module_changed:lib.services.memory_service"
+    },
+    {
+      "pattern": "lib/services/vision_service.py",
+      "reason": "Standalone service, reloadable",
+      "reload": "system.module_changed:lib.services.vision_service"
+    },
+    {
+      "pattern": "lib/services/notification_pipeline.py",
+      "reason": "Standalone service, reloadable",
+      "reload": "system.module_changed:lib.services.notification_pipeline"
+    },
+    {
+      "pattern": "lib/services/tool_context.py",
+      "reason": "Tool loading logic, reloadable via system.reload_tools",
+      "reload": "system.reload_tools"
+    },
+    {
+      "pattern": "lib/services/tool_executor.py",
+      "reason": "Central tool execution loop — changes affect all tool calls",
+      "reload": null,
+      "_note": "Editable but requires process restart. Use with extreme caution."
+    },
+    {
+      "pattern": "lib/utils/*.py",
+      "reason": "Utility code, importlib.reload sufficient",
+      "reload": "system.module_changed:lib.utils"
+    },
+    {
+      "pattern": "lib/mcp_client.py",
+      "reason": "MCP connections reinitialize on demand, no restart needed",
+      "reload": "system.module_changed:lib.mcp_client"
+    },
+    {
+      "pattern": "requirements.txt",
+      "reason": "Docker container — pip install at runtime is safe (container isolation)",
+      "reload": "pip_install"
+    },
+    {
+      "pattern": "docs/*.md",
+      "reason": "Documentation only, no code impact",
+      "reload": null
+    },
+    {
+      "pattern": "tests/*.py",
+      "reason": "Test files, no production impact",
+      "reload": null
+    }
+  ],
+  "deny": [
+    {
+      "pattern": "api_server.py",
+      "reason": "FastAPI/Uvicorn requires full process restart — not hot-reloadable"
+    },
+    {
+      "pattern": "lib/services/event_bus.py",
+      "reason": "Core infrastructure — reload kills all subscriptions"
+    },
+    {
+      "pattern": "lib/global_registry.py",
+      "reason": "Singleton — reload invalidates all references"
+    },
+    {
+      "pattern": "lib/services/app_initializer.py",
+      "reason": "Too intertwined — affects entire startup sequence"
+    },
+    {
+      "pattern": "lib/ai_providers/*.py",
+      "reason": "Provider initialization is complex and stateful"
+    },
+    {
+      "pattern": "config.yml",
+      "reason": "Configuration — not code, sensitive"
+    },
+    {
+      "pattern": "system_prompt/*.md",
+      "reason": "Personality definitions — changes should be deliberate, not automated"
+    },
+    {
+      "pattern": "lib/services/ai_pipeline.py",
+      "reason": "Central chat flow — changes affect all adapters simultaneously"
+    },
+    {
+      "pattern": ".nami_*",
+      "reason": "Safety net files — must never be edited manually"
+    }
+  ]
+}
