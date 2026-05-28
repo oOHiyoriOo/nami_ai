@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS research_queue (
     status      TEXT DEFAULT 'pending',
     priority    INTEGER DEFAULT 5,
     created_at  INTEGER NOT NULL,
-    result      TEXT
+    result      TEXT,
+    retry_count INTEGER DEFAULT 0,
+    next_retry_at INTEGER
 )
 """
 
@@ -100,8 +102,8 @@ async def queue_research(topic: str, description: str = "", priority: int = 5) -
         return tool_error(str(e), topic=topic)
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": True,
         "categories": ["research"],
@@ -134,4 +136,4 @@ def get_tool():
             },
         },
         "func": queue_research,
-    }
+    }]

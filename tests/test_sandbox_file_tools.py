@@ -42,7 +42,7 @@ def _make_sandbox():
 
 def test_read_file_sandbox_not_available():
     """g_data has no sandbox_manager → tool_error."""
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = None
         raw = asyncio.run(sandbox_read_file("/workspace/test.py"))
     r = _parse(raw)
@@ -58,7 +58,7 @@ def test_read_file_full():
         "exit_code": 0,
         "output": "line1\nline2\nline3\n",
     }
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_read_file("/workspace/test.py"))
     r = _parse(raw)
@@ -77,7 +77,7 @@ def test_read_file_line_range():
         "exit_code": 0,
         "output": "line10\nline11\nline12\n",
     }
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_read_file("/workspace/large.py", start_line=10, end_line=12))
     r = _parse(raw)
@@ -95,7 +95,7 @@ def test_read_file_no_end_line():
         "exit_code": 0,
         "output": "line5\nline6\nline7\n",
     }
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_read_file("/workspace/test.py", start_line=5))
     r = _parse(raw)
@@ -112,7 +112,7 @@ def test_read_file_empty():
         "exit_code": 0,
         "output": "",
     }
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_read_file("/workspace/empty.txt"))
     r = _parse(raw)
@@ -124,7 +124,7 @@ def test_read_file_exception():
     """Sandbox.run raises → tool_error."""
     sandbox = _make_sandbox()
     sandbox.run.side_effect = RuntimeError("SSH connection lost")
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_read_file("/workspace/test.py"))
     r = _parse(raw)
@@ -135,7 +135,7 @@ def test_read_file_exception():
 def test_read_file_start_line_zero():
     """start_line=0 → tool_error (sed uses 1-based addressing)."""
     sandbox = _make_sandbox()
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_read_file("/workspace/test.py", start_line=0))
     r = _parse(raw)
@@ -146,7 +146,7 @@ def test_read_file_start_line_zero():
 def test_read_file_start_line_negative():
     """start_line=-5 → tool_error."""
     sandbox = _make_sandbox()
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_read_file("/workspace/test.py", start_line=-5))
     r = _parse(raw)
@@ -157,7 +157,7 @@ def test_read_file_start_line_negative():
 def test_read_file_end_line_before_start():
     """end_line < start_line → tool_error."""
     sandbox = _make_sandbox()
-    with patch("OllamaTools.sandbox_read_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_read_file("/workspace/test.py", start_line=10, end_line=5))
     r = _parse(raw)
@@ -167,7 +167,7 @@ def test_read_file_end_line_before_start():
 
 def test_read_file_get_tool():
     """get_tool() returns valid schema for sandbox_read_file."""
-    tool = read_file_tool()
+    tool = read_file_tool()[0]
     fail = []
     if tool.get("type") != "function":
         fail.append(f"type={tool.get('type')}")
@@ -201,7 +201,7 @@ def test_read_file_get_tool():
 
 def test_write_file_sandbox_not_available():
     """g_data has no sandbox_manager → tool_error."""
-    with patch("OllamaTools.sandbox_write_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = None
         raw = asyncio.run(sandbox_write_file("/workspace/test.txt", "hello"))
     r = _parse(raw)
@@ -218,7 +218,7 @@ def test_write_file_success():
         "output": "",
     }
     content = "hello world\nline 2"
-    with patch("OllamaTools.sandbox_write_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_write_file("/workspace/test.txt", content))
     r = _parse(raw)
@@ -246,7 +246,7 @@ def test_write_file_special_characters():
         "output": "",
     }
     content = 'echo "$HOME" && ls `pwd`; cat <<EOF\nline\nEOF'
-    with patch("OllamaTools.sandbox_write_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_write_file("/workspace/script.sh", content))
     r = _parse(raw)
@@ -266,7 +266,7 @@ def test_write_file_failure():
         "exit_code": 1,
         "output": "bash: /protected/file.txt: Permission denied\n",
     }
-    with patch("OllamaTools.sandbox_write_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_write_file("/protected/file.txt", "data"))
     r = _parse(raw)
@@ -278,7 +278,7 @@ def test_write_file_exception():
     """Sandbox.run raises → tool_error."""
     sandbox = _make_sandbox()
     sandbox.run.side_effect = RuntimeError("disk full")
-    with patch("OllamaTools.sandbox_write_file.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_write_file("/workspace/test.txt", "data"))
     r = _parse(raw)
@@ -288,7 +288,7 @@ def test_write_file_exception():
 
 def test_write_file_get_tool():
     """get_tool() returns valid schema for sandbox_write_file."""
-    tool = write_file_tool()
+    tool = write_file_tool()[0]
     fail = []
     if tool.get("type") != "function":
         fail.append(f"type={tool.get('type')}")
@@ -320,7 +320,7 @@ def test_write_file_get_tool():
 
 def test_list_dir_sandbox_not_available():
     """g_data has no sandbox_manager → tool_error."""
-    with patch("OllamaTools.sandbox_list_dir.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = None
         raw = asyncio.run(sandbox_list_dir("/workspace"))
     r = _parse(raw)
@@ -343,7 +343,7 @@ def test_list_dir_success():
             "lrwxrwxrwx 1 root root   10 2026-05-08 10:00 link.txt -> /tmp/target\n"
         ),
     }
-    with patch("OllamaTools.sandbox_list_dir.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_list_dir("/workspace"))
     r = _parse(raw)
@@ -373,7 +373,7 @@ def test_list_dir_default_path():
         "exit_code": 0,
         "output": "total 0\n",
     }
-    with patch("OllamaTools.sandbox_list_dir.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_list_dir())
     r = _parse(raw)
@@ -394,7 +394,7 @@ def test_list_dir_empty():
             "drwxr-xr-x 1 root root 4096 2026-05-08 12:00 ..\n"
         ),
     }
-    with patch("OllamaTools.sandbox_list_dir.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_list_dir("/workspace"))
     r = _parse(raw)
@@ -406,7 +406,7 @@ def test_list_dir_exception():
     """Sandbox.run raises → tool_error."""
     sandbox = _make_sandbox()
     sandbox.run.side_effect = RuntimeError("connection timeout")
-    with patch("OllamaTools.sandbox_list_dir.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(sandbox_list_dir())
     r = _parse(raw)
@@ -416,7 +416,7 @@ def test_list_dir_exception():
 
 def test_list_dir_get_tool():
     """get_tool() returns valid schema for sandbox_list_dir."""
-    tool = list_dir_tool()
+    tool = list_dir_tool()[0]
     fail = []
     if tool.get("type") != "function":
         fail.append(f"type={tool.get('type')}")

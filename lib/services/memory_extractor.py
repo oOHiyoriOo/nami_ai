@@ -11,6 +11,7 @@ from typing import Any
 from dataclasses import dataclass
 from datetime import datetime
 
+from lib.ai_providers.base_provider import Message
 from lib.chat_helper import format_user_message
 from lib.global_registry import g_data
 
@@ -18,7 +19,6 @@ from lib.global_registry import g_data
 
 def slugify(name: str) -> str:
     """Convert a human-readable location name to a machine-friendly ID."""
-    import re
     return re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
 
 
@@ -242,7 +242,6 @@ class MemoryExtractor:
         logging.debug(f"Memory extraction using {self.provider_name}/{model} ({mode})")
 
         # Convert to provider message format
-        from lib.ai_providers.base_provider import Message
         provider_messages = [
             Message(role=m['role'], content=m['content'])
             for m in messages

@@ -42,7 +42,7 @@ def _make_sandbox():
 
 def test_get_job_output_sandbox_not_available():
     """g_data has no sandbox_manager → tool_error."""
-    with patch("OllamaTools.get_job_output.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = None
         raw = asyncio.run(get_job_output("abc123"))
     r = _parse(raw)
@@ -59,7 +59,7 @@ def test_get_job_output_running():
         "output": "processing...\n",
         "exit_code": None,
     }
-    with patch("OllamaTools.get_job_output.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(get_job_output("abc123"))
     r = _parse(raw)
@@ -77,7 +77,7 @@ def test_get_job_output_done():
         "output": "file1\nfile2\n",
         "exit_code": 0,
     }
-    with patch("OllamaTools.get_job_output.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(get_job_output("def456"))
     r = _parse(raw)
@@ -90,7 +90,7 @@ def test_get_job_output_not_found():
     """Sandbox returns not_found → tool_success (not error — job just not found)."""
     sandbox = _make_sandbox()
     sandbox.get_output.return_value = {"status": "not_found", "job_id": "xyz"}
-    with patch("OllamaTools.get_job_output.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(get_job_output("xyz"))
     r = _parse(raw)
@@ -102,7 +102,7 @@ def test_get_job_output_exception():
     """Sandbox.get_output raises → tool_error with exception message."""
     sandbox = _make_sandbox()
     sandbox.get_output.side_effect = RuntimeError("connection lost")
-    with patch("OllamaTools.get_job_output.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(get_job_output("abc"))
     r = _parse(raw)
@@ -112,7 +112,7 @@ def test_get_job_output_exception():
 
 def test_get_job_output_get_tool():
     """get_tool() returns valid schema for get_job_output."""
-    tool = get_job_output_tool()
+    tool = get_job_output_tool()[0]
     fail = []
     if tool.get("type") != "function":
         fail.append(f"type={tool.get('type')}")
@@ -138,7 +138,7 @@ def test_get_job_output_get_tool():
 
 def test_kill_job_sandbox_not_available():
     """g_data has no sandbox_manager → tool_error."""
-    with patch("OllamaTools.kill_job.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = None
         raw = asyncio.run(kill_job("abc123"))
     r = _parse(raw)
@@ -150,7 +150,7 @@ def test_kill_job_not_found():
     """Sandbox returns not_found for unknown job_id → tool_success."""
     sandbox = _make_sandbox()
     sandbox.kill_job.return_value = {"status": "not_found", "job_id": "xyz"}
-    with patch("OllamaTools.kill_job.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(kill_job("xyz"))
     r = _parse(raw)
@@ -163,7 +163,7 @@ def test_kill_job_killed():
     """Sandbox successfully kills a running job."""
     sandbox = _make_sandbox()
     sandbox.kill_job.return_value = {"status": "killed", "job_id": "abc"}
-    with patch("OllamaTools.kill_job.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(kill_job("abc"))
     r = _parse(raw)
@@ -176,7 +176,7 @@ def test_kill_job_already_done():
     """Sandbox says job already finished → tool_success."""
     sandbox = _make_sandbox()
     sandbox.kill_job.return_value = {"status": "already_done", "job_id": "def"}
-    with patch("OllamaTools.kill_job.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(kill_job("def"))
     r = _parse(raw)
@@ -188,7 +188,7 @@ def test_kill_job_exception():
     """Sandbox.kill_job raises → tool_error."""
     sandbox = _make_sandbox()
     sandbox.kill_job.side_effect = RuntimeError("process group gone")
-    with patch("OllamaTools.kill_job.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(kill_job("abc"))
     r = _parse(raw)
@@ -198,7 +198,7 @@ def test_kill_job_exception():
 
 def test_kill_job_get_tool():
     """get_tool() returns valid schema for kill_job."""
-    tool = kill_job_tool()
+    tool = kill_job_tool()[0]
     fail = []
     if tool.get("type") != "function":
         fail.append(f"type={tool.get('type')}")
@@ -224,7 +224,7 @@ def test_kill_job_get_tool():
 
 def test_list_jobs_sandbox_not_available():
     """g_data has no sandbox_manager → tool_error."""
-    with patch("OllamaTools.list_jobs.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = None
         raw = asyncio.run(list_jobs())
     r = _parse(raw)
@@ -236,7 +236,7 @@ def test_list_jobs_empty():
     """Sandbox returns empty list → tool_success with 'No jobs tracked yet.' string."""
     sandbox = _make_sandbox()
     sandbox.list_jobs.return_value = []
-    with patch("OllamaTools.list_jobs.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(list_jobs())
     r = _parse(raw)
@@ -252,7 +252,7 @@ def test_list_jobs_with_jobs():
     ]
     sandbox = _make_sandbox()
     sandbox.list_jobs.return_value = jobs_list
-    with patch("OllamaTools.list_jobs.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(list_jobs())
     r = _parse(raw)
@@ -265,7 +265,7 @@ def test_list_jobs_exception():
     """Sandbox.list_jobs raises → tool_error."""
     sandbox = _make_sandbox()
     sandbox.list_jobs.side_effect = RuntimeError("registry corrupted")
-    with patch("OllamaTools.list_jobs.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(list_jobs())
     r = _parse(raw)
@@ -275,7 +275,7 @@ def test_list_jobs_exception():
 
 def test_list_jobs_get_tool():
     """get_tool() returns valid schema for list_jobs."""
-    tool = list_jobs_tool()
+    tool = list_jobs_tool()[0]
     fail = []
     if tool.get("type") != "function":
         fail.append(f"type={tool.get('type')}")
@@ -301,7 +301,7 @@ def test_list_jobs_get_tool():
 
 def test_reset_sandbox_not_available():
     """g_data has no sandbox_manager → tool_error."""
-    with patch("OllamaTools.reset_sandbox.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = None
         raw = asyncio.run(reset_sandbox())
     r = _parse(raw)
@@ -313,7 +313,7 @@ def test_reset_sandbox_success():
     """Sandbox.reset returns ok → tool_success."""
     sandbox = _make_sandbox()
     sandbox.reset.return_value = {"status": "ok", "message": "Sandbox workspace wiped. All jobs cleared."}
-    with patch("OllamaTools.reset_sandbox.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(reset_sandbox())
     r = _parse(raw)
@@ -326,7 +326,7 @@ def test_reset_sandbox_exception():
     """Sandbox.reset raises → tool_error."""
     sandbox = _make_sandbox()
     sandbox.reset.side_effect = RuntimeError("SSH connection refused")
-    with patch("OllamaTools.reset_sandbox.g_data") as g:
+    with patch("OllamaTools.g_data") as g:
         g.get.return_value = sandbox
         raw = asyncio.run(reset_sandbox())
     r = _parse(raw)
@@ -336,7 +336,7 @@ def test_reset_sandbox_exception():
 
 def test_reset_sandbox_get_tool():
     """get_tool() returns valid schema for reset_sandbox."""
-    tool = reset_sandbox_tool()
+    tool = reset_sandbox_tool()[0]
     fail = []
     if tool.get("type") != "function":
         fail.append(f"type={tool.get('type')}")

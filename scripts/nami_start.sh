@@ -41,4 +41,9 @@ npm run build --prefix /app/mcp/neo-memory-mcp
 npx --yes playwright@latest install chromium --with-deps 2>&1 || \
     echo "[startup] WARNING: Playwright browser install failed — mcp_playwright tools will be unavailable"
 
+# ── Toktoken code index ──────────────────────────────────────────────────────
+# Create or update the code index for Nami to search her own codebase.
+/app/mcp/toktoken-mcp/toktoken index:update --path /app 2>&1 || \
+    /app/mcp/toktoken-mcp/toktoken index:create --path /app 2>&1
+
 exec python api_server.py

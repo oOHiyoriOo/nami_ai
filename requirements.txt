@@ -7,7 +7,6 @@ colorama>=0.4.6
 PyYAML>=6.0.1
 pydantic>=2.0.0
 aiohttp
-aiofiles>=24.1.0
 aiosqlite>=0.20.0
 dateparser>=1.1.0
 croniter>=1.3.8
@@ -15,7 +14,6 @@ pytz
 
 # LLM and AI
 ollama
-sentence_transformers>=4.0.1
 
 # Database
 neo4j
@@ -27,10 +25,12 @@ ddgs>=0.1.0
 numpy
 scikit-learn
 
-# Discord Bot (optional)
-
 # SSH Tools (sandbox bash execution)
 asyncssh
 
 # OpenAI-compatible providers (optional)
 openai
+
+# Testing
+pytest
+pytest-asyncio

@@ -55,11 +55,11 @@ async def search_memory(query: str, person: str = "") -> str:
         logging.error(f"Error querying memory: {e}")
         return tool_error(str(e), query=query)
 
-def get_tool():
+def get_tool() -> list[dict]:
     """
     Returns the memory search tool schema for Ollama AI integration.
     """
-    return {
+    return [{
         "type": "function",
         "safe": True,
         "categories": ["memory_read"],
@@ -82,5 +82,5 @@ def get_tool():
             }
         },
         "func": search_memory,
-    }
+    }]
 

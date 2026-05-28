@@ -48,15 +48,13 @@ class AIProvider(ABC):
         self,
         messages: list[Message],
         include_name: bool = True,
-        include_tool_calls: bool = True
     ) -> list[dict[str, Any]]:
         """
         Convert Message objects to provider-specific dict format.
 
         Args:
             messages: List of Message objects
-            include_name: Include 'name' field (OpenAI-style providers)
-            include_tool_calls: Include 'tool_calls' field
+            include_name: Include 'name' field (not supported by all providers, e.g. Ollama)
 
         Returns:
             List of message dictionaries
@@ -69,7 +67,7 @@ class AIProvider(ABC):
             }
             if include_name and msg.name:
                 message_dict["name"] = msg.name
-            if include_tool_calls and msg.tool_calls:
+            if msg.tool_calls:
                 message_dict["tool_calls"] = msg.tool_calls
             if msg.tool_call_id:
                 message_dict["tool_call_id"] = msg.tool_call_id

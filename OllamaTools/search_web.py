@@ -49,8 +49,8 @@ async def search_web(query: str, max_results: int = 5) -> str:
         return tool_error(str(e), query=query)
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": True,
         "categories": ["web"],
@@ -77,4 +77,4 @@ def get_tool():
             },
         },
         "func": search_web,
-    }
+    }]

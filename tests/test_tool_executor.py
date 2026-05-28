@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib.services.tool_executor import execute_tool_loop
+from lib.services.tool_executor import execute_tool_loop, _classify_error
 from lib.ai_providers.base_provider import Message, ChatResponse
 
 
@@ -36,7 +36,8 @@ def _make_provider(responses: list[ChatResponse]):
     return provider
 
 
-async def _run_loop(provider, messages, tools, initial_response, max_calls=10,
+async def _run_loop(provider, messages, tools, initial_response, max_calls=10, max_rounds=10,
+                   error_escalation_threshold=3,
                    on_tool_start=None, on_tool_done=None):
     """Execute tool loop and return (response, tool_messages) tuple."""
     return await execute_tool_loop(
@@ -46,6 +47,8 @@ async def _run_loop(provider, messages, tools, initial_response, max_calls=10,
         model="llama3.2",
         initial_response=initial_response,
         max_calls=max_calls,
+        max_rounds=max_rounds,
+        error_escalation_threshold=error_escalation_threshold,
         on_tool_start=on_tool_start,
         on_tool_done=on_tool_done,
     )
@@ -333,6 +336,230 @@ def test_no_tool_calls_returns_immediately():
         print(f"  [FAIL] content={result.content!r}")
         return False
     provider.chat.assert_not_called()
+    print("  [PASS]")
+    return True
+
+
+def test_max_rounds_limit():
+    """Loop stops after max_rounds even when every round is unique (no repeat)."""
+    print("Test: max_rounds absolute limit stops loop with varied tool calls")
+
+    call_count = [0]
+
+    async def fake_tool(**kwargs):
+        call_count[0] += 1
+        return "result"
+
+    def _make_varied(idx):
+        return ChatResponse(
+            content="",
+            tool_calls=[_make_tool_call(f"tool_{idx}", {"x": idx})],
+            model="llama3.2",
+        )
+
+    final = ChatResponse(content="Done.", model="llama3.2")
+    # Provider returns: round 2, round 3, round 4 (all unique tool names),
+    # then the break path consumes one more (text-only, no tools).
+    responses = [_make_varied(i) for i in range(2, 5)] + [final]
+    provider = _make_provider(responses)
+
+    tools = [
+        {"type": "function", "function": {"name": f"tool_{i}"}, "func": fake_tool}
+        for i in range(1, 6)
+    ]
+    initial = _make_varied(1)
+
+    asyncio.run(_run_loop(
+        provider, [Message(role="user", content="go")], tools,
+        initial_response=initial,
+        max_calls=100,     # repeat detection won't fire (all unique)
+        max_rounds=3,      # only 3 rounds allowed
+    ))
+
+    if call_count[0] > 3:
+        print(f"  [FAIL] tool called {call_count[0]} times (max_rounds=3)")
+        return False
+    print(f"  [PASS] called {call_count[0]}x")
+    return True
+
+
+def test_tool_error_escalation():
+    """Same tool producing same error 3x injects a system guidance message."""
+    print("Test: error escalation — same error 3x → guidance injected")
+
+    captured_system = []
+
+    async def fake_chat(messages, tools, **kwargs):
+        for m in messages:
+            if isinstance(m, Message) and m.role == "system":
+                captured_system.append(m.content)
+        return ChatResponse(content="Done.", model="llama3.2")
+
+    async def fake_tool(**kwargs):
+        return "HTTP 404 Not Found — the page you requested does not exist"
+
+    provider = MagicMock()
+    provider.chat = fake_chat
+
+    tc = _make_tool_call("fetch_url", {"url": "http://example.com/missing"})
+
+    # 3 rounds of the same failing tool call, then a text-only response
+    responses = [
+        ChatResponse(content="", tool_calls=[tc], model="llama3.2"),
+        ChatResponse(content="", tool_calls=[tc], model="llama3.2"),
+        ChatResponse(content="", tool_calls=[tc], model="llama3.2"),
+        ChatResponse(content="Done.", model="llama3.2"),
+    ]
+    provider = _make_provider(responses)
+    tools = [{"type": "function", "function": {"name": "fetch_url"}, "func": fake_tool}]
+
+    asyncio.run(_run_loop(
+        provider, [Message(role="user", content="fetch")], tools,
+        initial_response=ChatResponse(content="", tool_calls=[tc], model="llama3.2"),
+        max_calls=100,  # loop detection off
+    ))
+
+    if not captured_system:
+        print("  [FAIL] no system message captured")
+        return False
+    if not any("Try a different approach" in m for m in captured_system):
+        print(f"  [FAIL] guidance not found in: {captured_system}")
+        return False
+    if not any("HTTP 4xx" in m for m in captured_system):
+        print(f"  [FAIL] error category label missing in: {captured_system}")
+        return False
+    print("  [PASS]")
+    return True
+
+
+def test_error_escalation_different_tools():
+    """Different tools producing same error pattern are tracked independently."""
+    print("Test: error escalation — different tools tracked independently")
+
+    captured_system = []
+    tool_calls_log = []
+
+    async def fake_chat(messages, tools, **kwargs):
+        for m in messages:
+            if isinstance(m, Message) and m.role == "system":
+                captured_system.append(m.content)
+        return ChatResponse(content="Done.", model="llama3.2")
+
+    async def fake_tool_a(**kwargs):
+        tool_calls_log.append("a")
+        return "Connection refused"
+
+    async def fake_tool_b(**kwargs):
+        tool_calls_log.append("b")
+        return "Connection refused"
+
+    provider = MagicMock()
+    provider.chat = fake_chat
+
+    tools = [
+        {"type": "function", "function": {"name": "tool_a"}, "func": fake_tool_a},
+        {"type": "function", "function": {"name": "tool_b"}, "func": fake_tool_b},
+    ]
+
+    # Round 1: tool_a fails
+    # Round 2: tool_b fails (different tool, same error)
+    # Neither should hit threshold of 3 individually
+    tc_a = _make_tool_call("tool_a", {})
+    tc_b = _make_tool_call("tool_b", {})
+    responses = [
+        ChatResponse(content="", tool_calls=[tc_b], model="llama3.2"),
+        ChatResponse(content="", tool_calls=[tc_a], model="llama3.2"),
+        ChatResponse(content="Done.", model="llama3.2"),
+    ]
+    provider = _make_provider(responses)
+
+    asyncio.run(_run_loop(
+        provider, [Message(role="user", content="go")], tools,
+        initial_response=ChatResponse(content="", tool_calls=[tc_a], model="llama3.2"),
+        max_calls=100,
+    ))
+
+    # tool_a was called twice, tool_b once — neither hits 3
+    if captured_system:
+        print(f"  [FAIL] unexpected escalation: {captured_system}")
+        return False
+
+    if tool_calls_log != ["a", "b", "a"]:
+        print(f"  [FAIL] unexpected call order: {tool_calls_log}")
+        return False
+    print("  [PASS]")
+    return True
+
+
+def test_error_escalation_disabled():
+    """Threshold of 0 disables error escalation entirely."""
+    print("Test: error escalation — threshold 0 disables feature")
+
+    captured_system = []
+
+    async def fake_chat(messages, tools, **kwargs):
+        for m in messages:
+            if isinstance(m, Message) and m.role == "system":
+                captured_system.append(m.content)
+        return ChatResponse(content="Done.", model="llama3.2")
+
+    async def fake_tool(**kwargs):
+        return "HTTP 404 Not Found"
+
+    provider = MagicMock()
+    provider.chat = fake_chat
+
+    tc = _make_tool_call("fetch_url", {"url": "x"})
+    # Enough rounds to trigger escalation at default threshold
+    responses = [ChatResponse(content="", tool_calls=[tc], model="llama3.2")] * 4 + [
+        ChatResponse(content="Done.", model="llama3.2")
+    ]
+    provider = _make_provider(responses)
+    tools = [{"type": "function", "function": {"name": "fetch_url"}, "func": fake_tool}]
+
+    asyncio.run(_run_loop(
+        provider, [Message(role="user", content="go")], tools,
+        initial_response=ChatResponse(content="", tool_calls=[tc], model="llama3.2"),
+        max_calls=100,
+        error_escalation_threshold=0,
+    ))
+
+    if captured_system:
+        print(f"  [FAIL] escalation fired when disabled: {captured_system}")
+        return False
+    print("  [PASS]")
+    return True
+
+
+def test_error_pattern_classify():
+    """_classify_error correctly categorizes error strings."""
+    print("Test: _classify_error categories")
+
+    cases = [
+        ("HTTP 404 Not Found", "http_4xx"),
+        ("Received status code 404 — not found", "http_4xx"),
+        ("HTTP 502 Bad Gateway", "http_5xx"),
+        ("Server returned 503 Service Unavailable", "http_5xx"),
+        ("Connection refused", "connection_refused"),
+        ("ECONNREFUSED — port not open", "connection_refused"),
+        ("bash: nonexistent: command not found", "command_not_found"),
+        ("No such file or directory", "command_not_found"),
+        ("Permission denied", "permission_denied"),
+        ("Operation not permitted", "permission_denied"),
+        ("Connection timed out after 30s", "timeout"),
+        ("TimeoutError: request took too long", "timeout"),
+        ("JSON decode error: unexpected token '<'", "parse_error"),
+        ("malformed response from server", "parse_error"),
+        ("Everything went fine, result: 42", None),
+        ("", None),
+    ]
+
+    for text, expected in cases:
+        result = _classify_error(text)
+        if result != expected:
+            print(f"  [FAIL] classify({text!r}) = {result!r}, expected {expected!r}")
+            return False
+
     print("  [PASS]")
     return True
 

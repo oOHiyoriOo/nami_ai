@@ -7,8 +7,7 @@ Returns file content with line numbers prepended.
 
 import logging
 import shlex
-from lib.global_registry import g_data
-from OllamaTools import tool_success, tool_error
+from OllamaTools import _get_sandbox_or_error, tool_success, tool_error
 
 
 async def sandbox_read_file(path: str, start_line: int = 1, end_line: int | None = None) -> str:
@@ -34,9 +33,9 @@ async def sandbox_read_file(path: str, start_line: int = 1, end_line: int | None
             f"end_line ({end_line}) must be >= start_line ({start_line})"
         )
 
-    sandbox = g_data.get("sandbox_manager")
-    if not sandbox:
-        return tool_error("Sandbox is not available")
+    sandbox, err = _get_sandbox_or_error()
+    if err:
+        return err
 
     try:
         safe_path = shlex.quote(path)
@@ -70,8 +69,8 @@ async def sandbox_read_file(path: str, start_line: int = 1, end_line: int | None
         return tool_error(str(e), path=path)
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": True,
         "categories": ["sandbox"],
@@ -103,4 +102,4 @@ def get_tool():
             }
         },
         "func": sandbox_read_file,
-    }
+    }]

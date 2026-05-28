@@ -64,16 +64,32 @@ def test_load_all_empty_directory():
 # DynamicLoader.load_all() — filtering / skipping
 # ---------------------------------------------------------------------------
 
-def test_load_all_skips_init_and_dream_prefix():
-    """load_all() skips __init__.py and dream_*.py files."""
+def test_load_all_skips_init_only():
+    """load_all() skips __init__.py but loads everything else (no hardcoded exclusions)."""
 
     with tempfile.TemporaryDirectory() as tmpdir:
         _write_module(tmpdir, "__init__", "get_tool = lambda: {'name': 'init'}")
         _write_module(tmpdir, "dream_tools", "get_tool = lambda: {'name': 'dream'}")
+        _write_module(tmpdir, "research_tools", "get_tool = lambda: {'name': 'research'}")
         _write_module(tmpdir, "valid_tool", "get_tool = lambda: {'name': 'valid'}")
 
         loader = DynamicLoader(tmpdir, "get_tool")
         result = asyncio.run(loader.load_all())
+
+        names = sorted(r()['name'] for r in result if callable(r))
+        assert names == ['dream', 'research', 'valid'], f"expected all three, got {names}"
+
+
+def test_load_all_with_exclude_prefixes():
+    """load_all() with exclude_prefixes skips matching files."""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _write_module(tmpdir, "dream_tools", "get_tool = lambda: {'name': 'dream'}")
+        _write_module(tmpdir, "research_tools", "get_tool = lambda: {'name': 'research'}")
+        _write_module(tmpdir, "valid_tool", "get_tool = lambda: {'name': 'valid'}")
+
+        loader = DynamicLoader(tmpdir, "get_tool")
+        result = asyncio.run(loader.load_all(exclude_prefixes=["dream_", "research_"]))
 
         names = [r()['name'] for r in result if callable(r)]
         assert names == ['valid'], f"expected ['valid'], got {names}"
@@ -266,7 +282,9 @@ def test_load_tools_handles_get_tool_returning_list():
                 {"type": "function", "function": {"name": "t1", "description": "a", "parameters": {}}, "func": None},
                 {"type": "function", "function": {"name": "t2", "description": "b", "parameters": {}}, "func": None},
             ],
-            lambda: {"type": "function", "function": {"name": "t3", "description": "c", "parameters": {}}, "func": None},
+            lambda: [
+                {"type": "function", "function": {"name": "t3", "description": "c", "parameters": {}}, "func": None},
+            ],
         ]
         loader = ToolLoader()
         result = asyncio.run(loader.load_tools())
@@ -281,7 +299,7 @@ def test_load_tools_skips_non_callable():
     with patch.object(ToolLoader, 'load_all', new_callable=AsyncMock) as mock_load:
         mock_load.return_value = [
             "not callable",
-            lambda: {"type": "function", "function": {"name": "ok", "description": "x", "parameters": {}}, "func": None},
+            lambda: [{"type": "function", "function": {"name": "ok", "description": "x", "parameters": {}}, "func": None}],
             None,
             42,
         ]

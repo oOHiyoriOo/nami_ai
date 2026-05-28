@@ -244,7 +244,7 @@ def test_arbitrary_adapter_name_works():
 def test_get_tool_returns_schema():
     """get_tool() returns a complete tool schema dict."""
     get_tool = _get_get_tool()
-    schema = get_tool()
+    schema = get_tool()[0]
 
     assert schema["type"] == "function"
     assert schema["safe"] is False
@@ -264,7 +264,7 @@ def test_get_tool_returns_schema():
 def test_get_tool_func_is_callable():
     """get_tool() includes the actual send_message function."""
     get_tool = _get_get_tool()
-    schema = get_tool()
+    schema = get_tool()[0]
 
     assert "func" in schema
     assert callable(schema["func"])

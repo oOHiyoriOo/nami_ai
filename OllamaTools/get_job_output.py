@@ -3,8 +3,7 @@ get_job_output.py — Poll output from a background sandbox job.
 """
 
 import logging
-from lib.global_registry import g_data
-from OllamaTools import tool_success, tool_error
+from OllamaTools import _get_sandbox_or_error, tool_success, tool_error
 
 
 async def get_job_output(job_id: str) -> str:
@@ -17,9 +16,9 @@ async def get_job_output(job_id: str) -> str:
     Returns:
         tool_success with output, status (running/done), and exit_code.
     """
-    sandbox = g_data.get("sandbox_manager")
-    if not sandbox:
-        return tool_error("Sandbox is not available")
+    sandbox, err = _get_sandbox_or_error()
+    if err:
+        return err
     try:
         result = sandbox.get_output(job_id)
         return tool_success(result)
@@ -28,8 +27,8 @@ async def get_job_output(job_id: str) -> str:
         return tool_error(str(e), job_id=job_id)
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": True,
         "categories": ["sandbox"],
@@ -51,4 +50,4 @@ def get_tool():
             }
         },
         "func": get_job_output,
-    }
+    }]

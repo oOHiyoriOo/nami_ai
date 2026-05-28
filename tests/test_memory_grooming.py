@@ -233,7 +233,7 @@ class TestCondition:
             mod._min_new_memories = 5
 
             # Mock SQLite state to return old timestamp (so all memories are "new")
-            mod._get_state = AsyncMock(return_value=0.0)
+            mod._state.get = AsyncMock(return_value=0.0)
             # Mock _count_new_memories to return too few
             mod._count_new_memories = AsyncMock(return_value=2)
 
@@ -250,9 +250,9 @@ class TestCondition:
             mod = MemoryGrooming()
             mod._db_initialised = True
             mod._min_new_memories = 5
-            mod._get_state = AsyncMock(return_value=0.0)
+            mod._state.get = AsyncMock(return_value=0.0)
             mod._count_new_memories = AsyncMock(return_value=10)
-            mod._set_state = AsyncMock()
+            mod._state.set = AsyncMock()
 
             result = await mod.condition()
             assert result is True

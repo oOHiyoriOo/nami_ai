@@ -40,9 +40,9 @@ async def create_person(name: str, description: str = "", relationship: str = ""
         return tool_error(str(e))
 
 
-def get_tool():
+def get_tool() -> list[dict]:
     """Return the create_person tool schema."""
-    return {
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["memory_write"],
@@ -69,4 +69,4 @@ def get_tool():
             }
         },
         "func": create_person,
-    }
+    }]

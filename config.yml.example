@@ -87,6 +87,8 @@ bot:
   log_level: INFO              # DEBUG, INFO, WARNING, ERROR, CRITICAL
   max_tool_calls: 3            # Max consecutive *identical* tool rounds before aborting (loop guard).
                                # Different tool calls reset the counter, so autonomous work is unlimited.
+  max_tool_rounds: 10          # Absolute max number of tool-call rounds (any pattern).
+                               # Safety net that always terminates the loop. Default 10.
   retry_max_attempts: 5        # Retry attempts for transient provider errors (backoff: 1s, 2s, 4s...)
   history_max_age_days: 30     # Only include messages from the last N days in context window
   history_db_retention_days: 90  # Hard-delete messages older than N days from the DB on startup
@@ -123,7 +125,8 @@ dream:
   enabled: true
   min_idle_hours: 2          # Hours of silence before dreaming
   min_new_memories: 5        # Minimum new memories required since last dream
-  max_tool_calls: 40         # Max consecutive identical rounds for dream agent (loop guard)
+  max_tool_calls: 5          # Max consecutive identical rounds for dream agent (loop guard)
+  max_tool_rounds: 10        # Absolute max rounds for dream agent (safety net)
   # provider: ollama         # Optional — falls back to memory.extraction_provider
   # model: qwen3:32b          # Optional — falls back to memory.extraction_model
 
@@ -233,6 +236,16 @@ paths:
 #       NEO4J_USER: "neo4j"
 #       NEO4J_PASSWORD: "neo-memory-secret"
 #     reconnect: true
+#   
+#   # Toktoken code intelligence — semantic code search and navigation
+#   # Exposes: search_symbols, search_text, inspect_symbol, inspect_outline,
+#   # find_callers, find_importers, inspect_blast_radius, find_dead, and more.
+#   # The index is created/updated on startup by nami_start.sh.
+#   toktoken:
+#     enabled: true
+#     command: /app/mcp/toktoken-mcp/toktoken
+#     args: ["serve"]
+#     reconnect: true
 #
 #   # ── Playwright MCP — real browser for web research ────────────────────────
 #   # Exposes tools prefixed mcp_playwright_: browser_navigate, browser_snapshot,
@@ -299,11 +312,14 @@ heartbeat:
       min_idle_minutes: 30        # Phase A (discovery) only fires when idle this long
       max_daily_sessions: 3       # Max research sessions per day (Phase A + B combined)
       discovery_max_topics: 2     # Topics queued per autonomous discovery pass
-      max_tool_calls: 40          # Research Agent tool call budget
+      max_tool_calls: 5           # Research Agent loop guard (consecutive identical rounds)
+      max_tool_rounds: 15         # Research Agent absolute round cap (safety net)
       provider: ollama            # Provider for both discovery and research agents
       model: llama3.2             # Model for both agents (use a capable one for research)
       day_start_hour: 6           # Phase A only fires between 06:00 and 20:00 (local time)
       day_end_hour: 20            # Outside this window the dream module takes over
+      retry_max_attempts: 3       # Max retries before permanently failing a research topic
+      retry_backoff_base_hours: 1 # Base hours for exponential backoff (1h → 4h → 16h)
 
 # Tool-specific configuration
 # Individual settings for built-in tools

@@ -6,8 +6,7 @@ Longer-running commands are auto-backgrounded and return a job_id for polling.
 """
 
 import logging
-from lib.global_registry import g_data
-from OllamaTools import tool_success, tool_error
+from OllamaTools import _get_sandbox_or_error, tool_success, tool_error
 
 
 async def run_bash(command: str) -> str:
@@ -23,9 +22,9 @@ async def run_bash(command: str) -> str:
     Returns:
         tool_success with output (done) or job_id (still running).
     """
-    sandbox = g_data.get("sandbox_manager")
-    if not sandbox:
-        return tool_error("Sandbox is not available")
+    sandbox, err = _get_sandbox_or_error()
+    if err:
+        return err
     try:
         result = await sandbox.run(command)
         return tool_success(result, command=command)
@@ -34,8 +33,8 @@ async def run_bash(command: str) -> str:
         return tool_error(str(e), command=command)
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["sandbox_dangerous"],
@@ -59,4 +58,4 @@ def get_tool():
             }
         },
         "func": run_bash,
-    }
+    }]

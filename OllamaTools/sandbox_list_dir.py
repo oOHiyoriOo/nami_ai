@@ -7,8 +7,7 @@ list of file entries. Far more usable than raw ls output for an AI consumer.
 
 import logging
 import shlex
-from lib.global_registry import g_data
-from OllamaTools import tool_success, tool_error
+from OllamaTools import _get_sandbox_or_error, tool_success, tool_error
 
 
 async def sandbox_list_dir(path: str = "/workspace") -> str:
@@ -24,9 +23,9 @@ async def sandbox_list_dir(path: str = "/workspace") -> str:
     Returns:
         tool_success with structured file list, or tool_error on failure.
     """
-    sandbox = g_data.get("sandbox_manager")
-    if not sandbox:
-        return tool_error("Sandbox is not available")
+    sandbox, err = _get_sandbox_or_error()
+    if err:
+        return err
 
     try:
         safe_path = shlex.quote(path)
@@ -114,8 +113,8 @@ def _parse_ls_output(output: str) -> list[dict]:
     return entries
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": True,
         "categories": ["sandbox"],
@@ -138,4 +137,4 @@ def get_tool():
             }
         },
         "func": sandbox_list_dir,
-    }
+    }]

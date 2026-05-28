@@ -38,9 +38,9 @@ async def create_location(name: str, description: str = "") -> str:
         return tool_error(str(e))
 
 
-def get_tool():
+def get_tool() -> list[dict]:
     """Return the create_location tool schema."""
-    return {
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["memory_write"],
@@ -63,4 +63,4 @@ def get_tool():
             }
         },
         "func": create_location,
-    }
+    }]

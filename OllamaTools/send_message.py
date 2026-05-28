@@ -50,9 +50,9 @@ async def send_message(adapter: str, recipient: str, message: str) -> str:
     return tool_success({"adapter": adapter, "to": recipient, "type": target_type})
 
 
-def get_tool():
+def get_tool() -> list[dict]:
     """Return the send_message tool schema."""
-    return {
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["communication"],
@@ -90,5 +90,5 @@ def get_tool():
             },
         },
         "func": send_message,
-    }
+    }]
 

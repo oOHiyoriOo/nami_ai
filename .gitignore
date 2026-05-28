@@ -189,3 +189,8 @@ nami_rsa.pub
 planning/
 scheduler.db
 tool_responses.db
+
+# Nami self-modification safety net
+.nami_change_session
+.nami_backups/
+.nami_session_cache/

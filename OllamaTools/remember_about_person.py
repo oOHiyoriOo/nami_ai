@@ -1,8 +1,8 @@
 """
 remember_about_person.py — Store a fact about a known person in Nami's memory graph.
 
-Allows Nami to record third-party facts: "I met Sarah today", "Alice prefers dark mode",
-"Bob works at ACME Corp" — linked to the person's graph node.
+Allows Nami to record third-party facts: "I met Sarah today", "Zero prefers dark mode",
+"alice works at ACME Corp" — linked to the person's graph node.
 """
 
 import logging
@@ -85,9 +85,9 @@ async def remember_about_person(person_name: str, fact: str) -> str:
         return tool_error(str(e))
 
 
-def get_tool():
+def get_tool() -> list[dict]:
     """Return the remember_about_person tool schema."""
-    return {
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["memory_write"],
@@ -110,4 +110,4 @@ def get_tool():
             }
         },
         "func": remember_about_person,
-    }
+    }]

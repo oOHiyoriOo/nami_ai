@@ -311,18 +311,18 @@ def test_init_db_creates_table():
 
 
 # ---------------------------------------------------------------------------
-# _get_state() / _set_state()
+# _get_state() / _set_state() — now delegated to SqliteKVStore
 # ---------------------------------------------------------------------------
 
 def test_get_state_returns_default_when_no_row():
-    """_get_state() returns default=0.0 when key doesn't exist."""
+    """SqliteKVStore.get() returns default=0.0 when key doesn't exist."""
     db_path = _tmp_db()
     try:
         dm = _make_dm(db_path)
 
         async def run():
             await dm._init_db()
-            val = await dm._get_state("nonexistent", default=99.9)
+            val = await dm._state.get("nonexistent", default=99.9)
             assert val == 99.9
 
         asyncio.run(run())
@@ -331,15 +331,15 @@ def test_get_state_returns_default_when_no_row():
 
 
 def test_set_state_and_get_state_roundtrip():
-    """_set_state() persists a float that _get_state() can read back."""
+    """SqliteKVStore.set() persists a float that get() can read back."""
     db_path = _tmp_db()
     try:
         dm = _make_dm(db_path)
 
         async def run():
             await dm._init_db()
-            await dm._set_state("test_key", 42.5)
-            val = await dm._get_state("test_key")
+            await dm._state.set("test_key", 42.5)
+            val = await dm._state.get("test_key")
             assert val == 42.5
 
         asyncio.run(run())

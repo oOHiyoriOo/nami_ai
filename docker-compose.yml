@@ -16,6 +16,7 @@ services:
       - sandbox_secrets:/secrets:ro         # read auto-generated sandbox SSH password
       - sandbox_data:/workspace:ro           # read-only sandbox files for MCP servers (1:1 path match)
       - ./scripts:/scripts:ro               # startup scripts
+      - toktoken_cache:/root/.cache/toktoken   # toktoken code index (persisted across restarts)
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:11434/health', timeout=5)"]
       interval: 10s
@@ -60,11 +61,11 @@ services:
     command: bash /scripts/sandbox_start.sh
 
   # ── Sandbox (Jetson GPU — jetson-containers, ARM64, CUDA) ───────────────────
-  # Pre-built for NVIDIA Jetson. Exposes GPU to Nami's bash tool.
+  # Pre-built for NVIDIA Jetson (Orin / Xavier). Exposes Tegra GPU to Nami's bash tool.
   # Build first:  cd sandbox && ./build.sh   (runs on the Jetson, uses jetson-containers)
   # Use with:     --profile sandbox-jetson  (instead of --profile sandbox)
   sandbox_jetson:
-    image: nami_sandbox:jetson
+    image: nami_sandbox:jetson-r36.4.tegra-aarch64-cu126-22.04
     container_name: nami_sandbox
     restart: unless-stopped
     profiles: ["sandbox-jetson"]
@@ -156,6 +157,7 @@ services:
 volumes:
   sandbox_data:
   sandbox_secrets:
+  toktoken_cache:
   sandbox_conda:
   sandbox_nvm:
   sandbox_sdkman:

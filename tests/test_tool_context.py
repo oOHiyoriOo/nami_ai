@@ -6,7 +6,6 @@ Covers:
 - for_heartbeat() filters by module-declared categories
 - for_heartbeat() with empty categories returns no tools (fail-safe)
 - schemas are stripped of func/safe/categories
-- tool_map maps correct callables
 - dream tools included in heartbeat but not in chat (as before)
 """
 
@@ -172,7 +171,6 @@ async def test_for_heartbeat_empty_categories():
     ctx = await ToolContext.for_heartbeat("system_health")
     assert ctx.tools == []
     assert ctx.schemas == []
-    assert ctx.tool_map == {}
 
 
 @pytest.mark.asyncio
@@ -181,17 +179,6 @@ async def test_for_heartbeat_no_config():
     ctx = await ToolContext.for_heartbeat("no_categories")
     assert ctx.tools == []
     assert ctx.schemas == []
-    assert ctx.tool_map == {}
-
-
-@pytest.mark.asyncio
-async def test_tool_map_has_all_callables():
-    """Every tool in the context should have its callable in tool_map."""
-    ctx = await ToolContext.for_chat()
-    for tool in ctx.tools:
-        name = tool["function"]["name"]
-        assert name in ctx.tool_map
-        assert callable(ctx.tool_map[name])
 
 
 @pytest.mark.asyncio

@@ -3,8 +3,7 @@ list_jobs.py — List all tracked sandbox jobs (running and completed).
 """
 
 import logging
-from lib.global_registry import g_data
-from OllamaTools import tool_success, tool_error
+from OllamaTools import _get_sandbox_or_error, tool_success, tool_error
 
 
 async def list_jobs() -> str:
@@ -14,9 +13,9 @@ async def list_jobs() -> str:
     Returns:
         tool_success with a list of job summaries.
     """
-    sandbox = g_data.get("sandbox_manager")
-    if not sandbox:
-        return tool_error("Sandbox is not available")
+    sandbox, err = _get_sandbox_or_error()
+    if err:
+        return err
     try:
         jobs = sandbox.list_jobs()
         return tool_success(jobs if jobs else "No jobs tracked yet.")
@@ -25,8 +24,8 @@ async def list_jobs() -> str:
         return tool_error(str(e))
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": True,
         "categories": ["sandbox"],
@@ -43,4 +42,4 @@ def get_tool():
             }
         },
         "func": list_jobs,
-    }
+    }]

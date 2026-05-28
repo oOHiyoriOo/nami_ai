@@ -10,8 +10,7 @@ import base64
 import logging
 import os
 import shlex
-from lib.global_registry import g_data
-from OllamaTools import tool_success, tool_error
+from OllamaTools import _get_sandbox_or_error, tool_success, tool_error
 
 
 async def sandbox_write_file(path: str, content: str) -> str:
@@ -29,9 +28,9 @@ async def sandbox_write_file(path: str, content: str) -> str:
     Returns:
         tool_success confirming the write, or tool_error on failure.
     """
-    sandbox = g_data.get("sandbox_manager")
-    if not sandbox:
-        return tool_error("Sandbox is not available")
+    sandbox, err = _get_sandbox_or_error()
+    if err:
+        return err
 
     try:
         encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
@@ -60,8 +59,8 @@ async def sandbox_write_file(path: str, content: str) -> str:
         return tool_error(str(e), path=path)
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["sandbox_dangerous"],
@@ -89,4 +88,4 @@ def get_tool():
             }
         },
         "func": sandbox_write_file,
-    }
+    }]

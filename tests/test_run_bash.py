@@ -26,7 +26,7 @@ from OllamaTools.run_bash import run_bash, get_tool
 
 def test_get_tool_structure():
     """get_tool() returns properly structured tool definition."""
-    tool = get_tool()
+    tool = get_tool()[0]
     assert tool.get("type") == "function", f"[FAIL] Expected type='function'"
     assert tool.get("function"), f"[FAIL] Missing 'function' key"
     fn = tool["function"]
@@ -37,20 +37,20 @@ def test_get_tool_structure():
 
 def test_get_tool_safe_is_false():
     """get_tool() marks tool as safe=False (dangerous sandbox tool)."""
-    tool = get_tool()
+    tool = get_tool()[0]
     assert tool.get("safe") is False, f"[FAIL] Expected safe=False, got {tool.get('safe')!r}"
 
 
 def test_get_tool_func_is_callable():
     """get_tool() 'func' key points to callable run_bash."""
-    tool = get_tool()
+    tool = get_tool()[0]
     func = tool.get("func")
     assert callable(func), f"[FAIL] 'func' is not callable: {type(func)}"
 
 
 def test_get_tool_categories():
     """get_tool() includes sandbox_dangerous category."""
-    tool = get_tool()
+    tool = get_tool()[0]
     cats = tool.get("categories", [])
     assert "sandbox_dangerous" in cats, f"[FAIL] Expected 'sandbox_dangerous' in categories, got {cats}"
 
@@ -81,7 +81,7 @@ def test_successful_command():
         "output": "file1.txt\nfile2.txt\n",
     })
 
-    with patch("OllamaTools.run_bash.g_data") as mock_g_data:
+    with patch("OllamaTools.g_data") as mock_g_data:
         mock_g_data.get.return_value = sandbox
         raw = asyncio.run(run_bash("ls /workspace"))
 
@@ -101,7 +101,7 @@ def test_command_with_special_characters():
         "output": "hello world\n-rw-r--r-- 1 root root 0 file\n/root\n",
     })
 
-    with patch("OllamaTools.run_bash.g_data") as mock_g_data:
+    with patch("OllamaTools.g_data") as mock_g_data:
         mock_g_data.get.return_value = sandbox
         raw = asyncio.run(run_bash(cmd))
 
@@ -120,7 +120,7 @@ def test_command_with_shell_metacharacters():
         "output": "5\n",
     })
 
-    with patch("OllamaTools.run_bash.g_data") as mock_g_data:
+    with patch("OllamaTools.g_data") as mock_g_data:
         mock_g_data.get.return_value = sandbox
         raw = asyncio.run(run_bash(cmd))
 
@@ -131,7 +131,7 @@ def test_command_with_shell_metacharacters():
 
 def test_sandbox_unavailable():
     """g_data has no sandbox_manager → tool_error returned."""
-    with patch("OllamaTools.run_bash.g_data") as mock_g_data:
+    with patch("OllamaTools.g_data") as mock_g_data:
         mock_g_data.get.return_value = None
         raw = asyncio.run(run_bash("echo hello"))
 
@@ -144,7 +144,7 @@ def test_ssh_failure():
     """sandbox.run() raises exception → graceful error via tool_error."""
     sandbox = _make_sandbox_mock(side_effect=ConnectionError("SSH connection refused"))
 
-    with patch("OllamaTools.run_bash.g_data") as mock_g_data:
+    with patch("OllamaTools.g_data") as mock_g_data:
         mock_g_data.get.return_value = sandbox
         raw = asyncio.run(run_bash("echo hello"))
 
@@ -158,7 +158,7 @@ def test_sandbox_run_raises_timeout():
     """sandbox.run() raises TimeoutError → graceful error."""
     sandbox = _make_sandbox_mock(side_effect=TimeoutError("Command timed out"))
 
-    with patch("OllamaTools.run_bash.g_data") as mock_g_data:
+    with patch("OllamaTools.g_data") as mock_g_data:
         mock_g_data.get.return_value = sandbox
         raw = asyncio.run(run_bash("sleep 999"))
 
@@ -176,7 +176,7 @@ def test_output_truncation_large_result():
         "output": large_output,
     })
 
-    with patch("OllamaTools.run_bash.g_data") as mock_g_data:
+    with patch("OllamaTools.g_data") as mock_g_data:
         mock_g_data.get.return_value = sandbox
         raw = asyncio.run(run_bash("cat /var/log/syslog"))
 
@@ -196,7 +196,7 @@ def test_command_with_quotes_and_escapes():
         "output": "it's a test\nshe said \"hello\"\npath with spaces\n",
     })
 
-    with patch("OllamaTools.run_bash.g_data") as mock_g_data:
+    with patch("OllamaTools.g_data") as mock_g_data:
         mock_g_data.get.return_value = sandbox
         raw = asyncio.run(run_bash(cmd))
 

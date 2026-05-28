@@ -62,10 +62,13 @@ def _parse_time(run_at: str) -> Optional[int]:
     if _is_cron(run_at):
         try:
             from croniter import croniter
+        except ImportError:
+            return None  # croniter not installed; let _create_task_common report the error
+        try:
             cron = croniter(run_at, time.time())
             return int(cron.get_next(float))
-        except Exception:
-            return None
+        except (ValueError, KeyError):
+            return None  # invalid cron expression
 
     dt = dateparser.parse(
         run_at,
@@ -117,6 +120,12 @@ async def _create_task_common(
         run_at_stripped = run_at.strip()
         scheduled_at = _parse_time(run_at_stripped)
         if scheduled_at is None:
+            if _is_cron(run_at_stripped):
+                return tool_error(
+                    f"Could not parse cron expression: {run_at!r}. "
+                    f"Is croniter installed? Try: pip install croniter",
+                    run_at=run_at,
+                )
             return tool_error(f"Could not parse time: {run_at!r}", run_at=run_at)
         if scheduled_at <= int(time.time()):
             return tool_error("Scheduled time is in the past — please use a future time.", run_at=run_at)
@@ -396,7 +405,7 @@ def _context_from_source(source_user=None, client=None) -> tuple[str, str, str]:
 # Tool registration
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_tool():
+def get_tool() -> list[dict]:
     """
     Returns a list of all scheduling tool schemas.
 

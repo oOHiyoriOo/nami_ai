@@ -259,7 +259,7 @@ def test_resolve_person_exception_returns_none():
 
 def test_get_tool_has_correct_schema():
     """get_tool() returns properly structured tool definition."""
-    tool = get_tool()
+    tool = get_tool()[0]
     assert tool.get("type") == "function", f"[FAIL] Expected type='function', got {tool.get('type')!r}"
     assert tool.get("function"), f"[FAIL] Missing 'function' key"
     fn = tool["function"]
@@ -277,20 +277,20 @@ def test_get_tool_has_correct_schema():
 
 def test_get_tool_safe_is_true():
     """get_tool() marks tool as safe=True (read-only memory operation)."""
-    tool = get_tool()
+    tool = get_tool()[0]
     assert tool.get("safe") is True, f"[FAIL] Expected safe=True, got {tool.get('safe')!r}"
 
 
 def test_get_tool_has_memory_read_category():
     """get_tool() includes 'memory_read' in categories."""
-    tool = get_tool()
+    tool = get_tool()[0]
     cats = tool.get("categories", [])
     assert "memory_read" in cats, f"[FAIL] Expected 'memory_read' in categories, got {cats}"
 
 
 def test_get_tool_func_is_callable():
     """get_tool() 'func' key points to callable search_memory."""
-    tool = get_tool()
+    tool = get_tool()[0]
     func = tool.get("func")
     assert callable(func), f"[FAIL] 'func' is not callable: {type(func)}"
 

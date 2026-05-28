@@ -72,9 +72,9 @@ async def link_my_identity(
         return tool_error(str(e))
 
 
-def get_tool():
+def get_tool() -> list[dict]:
     """Return the link_my_identity tool schema."""
-    return {
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["memory_write"],
@@ -101,4 +101,4 @@ def get_tool():
             },
         },
         "func": link_my_identity,
-    }
+    }]

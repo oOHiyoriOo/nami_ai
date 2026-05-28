@@ -6,8 +6,7 @@ a fresh workspace without affecting installed system packages.
 """
 
 import logging
-from lib.global_registry import g_data
-from OllamaTools import tool_success, tool_error
+from OllamaTools import _get_sandbox_or_error, tool_success, tool_error
 
 
 async def reset_sandbox() -> str:
@@ -21,9 +20,9 @@ async def reset_sandbox() -> str:
     Returns:
         tool_success confirming the reset, or tool_error on failure.
     """
-    sandbox = g_data.get("sandbox_manager")
-    if not sandbox:
-        return tool_error("Sandbox is not available")
+    sandbox, err = _get_sandbox_or_error()
+    if err:
+        return err
     try:
         result = await sandbox.reset()
         return tool_success(result)
@@ -32,8 +31,8 @@ async def reset_sandbox() -> str:
         return tool_error(str(e))
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["sandbox_dangerous"],
@@ -52,4 +51,4 @@ def get_tool():
             }
         },
         "func": reset_sandbox,
-    }
+    }]

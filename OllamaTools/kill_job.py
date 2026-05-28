@@ -3,8 +3,7 @@ kill_job.py — Terminate a running background sandbox job.
 """
 
 import logging
-from lib.global_registry import g_data
-from OllamaTools import tool_success, tool_error
+from OllamaTools import _get_sandbox_or_error, tool_success, tool_error
 
 
 async def kill_job(job_id: str) -> str:
@@ -17,9 +16,9 @@ async def kill_job(job_id: str) -> str:
     Returns:
         tool_success confirming the job was killed or was already done.
     """
-    sandbox = g_data.get("sandbox_manager")
-    if not sandbox:
-        return tool_error("Sandbox is not available")
+    sandbox, err = _get_sandbox_or_error()
+    if err:
+        return err
     try:
         result = sandbox.kill_job(job_id)
         return tool_success(result)
@@ -28,8 +27,8 @@ async def kill_job(job_id: str) -> str:
         return tool_error(str(e), job_id=job_id)
 
 
-def get_tool():
-    return {
+def get_tool() -> list[dict]:
+    return [{
         "type": "function",
         "safe": False,
         "categories": ["sandbox_dangerous"],
@@ -48,4 +47,4 @@ def get_tool():
             }
         },
         "func": kill_job,
-    }
+    }]
