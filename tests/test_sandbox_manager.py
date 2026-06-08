@@ -204,8 +204,3 @@ def test_exit_code_starts_none():
     """exit_code starts as None on fresh job"""
     job = SandboxJob("test-9", "echo hello")
     assert job.exit_code is None, f"[FAIL] Expected exit_code=None, got {job.exit_code}"
-
-
-if __name__ == "__main__":
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

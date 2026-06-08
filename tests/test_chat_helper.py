@@ -67,9 +67,3 @@ def test_unicode_characters():
     result = format_user_message(name, "2026-01-01 12:00:00", content)
     expected = "アリス [2026-01-01 12:00:00] : こんにちは 🌍"
     assert result == expected, f"Expected {expected!r}, got {result!r}"
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

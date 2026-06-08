@@ -455,8 +455,3 @@ def test_parse_ls_output_skips_empty_lines():
 
 
 # ══════════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))

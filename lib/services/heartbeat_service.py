@@ -22,6 +22,8 @@ import logging
 import time
 from typing import Any
 
+import aiosqlite
+
 from lib.services.heartbeat_module import HeartbeatModule
 
 
@@ -73,17 +75,34 @@ class HeartbeatService:
     async def start(self) -> None:
         """Start the background tick loop."""
         await self._init_db()
+        # Start all registered modules
+        for module in self._modules:
+            try:
+                await module.start()
+                logging.debug(f"[heartbeat] Module {module.name} started")
+            except Exception as e:
+                logging.error(f"[heartbeat] Failed to start module {module.name}: {e}", exc_info=True)
         self._task = asyncio.create_task(self._tick_loop(), name="heartbeat_tick")
         logging.info("[heartbeat] HeartbeatService started")
 
     async def stop(self) -> None:
-        """Stop the tick loop gracefully."""
+        """Stop the tick loop and all modules gracefully."""
         if self._task:
             self._task.cancel()
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        # Stop all registered modules
+        for module in self._modules:
+            try:
+                await module.stop()
+                logging.debug(f"[heartbeat] Module {module.name} stopped")
+            except Exception as e:
+                logging.error(f"[heartbeat] Failed to stop module {module.name}: {e}", exc_info=True)
+        # Close own DB connection
+        if hasattr(self, '_conn') and self._conn:
+            await self._conn.close()
         logging.info("[heartbeat] HeartbeatService stopped")
 
     def record_event(self) -> None:
@@ -144,31 +163,35 @@ class HeartbeatService:
 
     async def _init_db(self) -> None:
         """Create the heartbeat_state table if it doesn't exist."""
-        import aiosqlite
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS heartbeat_state (
-                    module TEXT PRIMARY KEY,
-                    last_run REAL,
-                    last_result TEXT,
-                    run_count INTEGER DEFAULT 0
-                )
-            """)
-            await db.commit()
+        self._conn = await aiosqlite.connect(self.db_path)
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS heartbeat_state (
+                module TEXT PRIMARY KEY,
+                last_run REAL,
+                last_result TEXT,
+                run_count INTEGER DEFAULT 0
+            )
+        """)
+        await self._conn.commit()
+
+    async def _ensure_conn(self) -> aiosqlite.Connection:
+        """Return the persistent connection, opening it lazily if needed."""
+        if self._conn is None:
+            self._conn = await aiosqlite.connect(self.db_path)
+        return self._conn
 
     async def _save_run(self, module_name: str, success: bool) -> None:
         """Persist module run result to DB."""
-        import aiosqlite
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                await db.execute(
-                    """INSERT OR REPLACE INTO heartbeat_state
-                       (module, last_run, last_result, run_count)
-                       VALUES (?, ?, ?,
-                         COALESCE((SELECT run_count FROM heartbeat_state WHERE module=?), 0) + 1)""",
-                    (module_name, time.time(), "ok" if success else "error", module_name),
-                )
-                await db.commit()
+            db = await self._ensure_conn()
+            await db.execute(
+                """INSERT OR REPLACE INTO heartbeat_state
+                   (module, last_run, last_result, run_count)
+                   VALUES (?, ?, ?,
+                     COALESCE((SELECT run_count FROM heartbeat_state WHERE module=?), 0) + 1)""",
+                (module_name, time.time(), "ok" if success else "error", module_name),
+            )
+            await self._conn.commit()
         except Exception as e:
             logging.warning(f"[heartbeat] Failed to persist run state: {e}")
 

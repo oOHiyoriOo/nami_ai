@@ -36,17 +36,22 @@ providers:
   ollama:
     url: http://localhost:11434
     max_tool_calls: 3
+    request_timeout: 600               # hard cap: total seconds before giving up (0 = no timeout)
+    connect_timeout: 30                # seconds to establish TCP connection
 
   # OpenAI provider configuration (requires: pip install openai)
   # openai:
   #   api_key: YOUR_OPENAI_API_KEY
-  #   organization: YOUR_ORG_ID  # optional
+  #   model: gpt-4o                  # optional, defaults to gpt-4
+  #   organization: YOUR_ORG_ID     # optional
 
   # GitHub Copilot provider configuration (requires: pip install openai)
   # Requires copilot-api server running separately (https://github.com/ericc-ch/copilot-api)
   # copilot:
   #   url: http://copilot-api:4141  # copilot-api server URL (container name or host)
   #   api_key: dummy                 # copilot-api uses dummy auth
+  #   request_timeout: 600           # hard cap: total seconds before giving up (0 = no timeout)
+  #   connect_timeout: 30            # seconds to establish TCP connection
 
   # Anthropic provider configuration (requires: pip install anthropic)
   # anthropic:
@@ -61,6 +66,8 @@ adapters:
     bridge_secret: CHANGE_ME_DISCORD_SECRET  # Must match BRIDGE_SECRET in discord_bridge env
     # Discord bot token (obtained from https://discord.com/developers/applications)
     token: YOUR_DISCORD_BOT_TOKEN_HERE
+    # Max conversation history entries sent to nami per message
+    max_history: 50
     # User IDs allowed to DM nami or @mention her in non-AI channels (list of strings)
     permitted_users:
       - "123456789012345678"
@@ -92,7 +99,14 @@ bot:
   retry_max_attempts: 5        # Retry attempts for transient provider errors (backoff: 1s, 2s, 4s...)
   history_max_age_days: 30     # Only include messages from the last N days in context window
   history_db_retention_days: 90  # Hard-delete messages older than N days from the DB on startup
+  max_history_tokens: 0        # Token budget for conversation history (~4 chars/token).
+                               # Messages beyond the budget are trimmed (most recent kept).
+                               # Set to 0 to disable (default). The provider enforces its
+                               # own context window; tool stash (#303/#304) handles bloat.
+  request_dump: false          # Dump every provider request to logs/request_dump.jsonl.
+                               # Useful for diagnosing oversized prompts. Disable in production.
   timezone: Europe/Berlin      # Timezone for {{time}}/{{date}} templates in system prompts
+  owner: "Your Name"           # Primary user name — used in {{owner}} template variable
 
 # Used by the memory module to store data.
 neo4j:
@@ -103,16 +117,19 @@ neo4j:
 # Memory system settings
 memory:
   # Embedding settings for similarity search
-  embedding_model: all-MiniLM-L6-v2  # Sentence transformer model for embeddings
+  embedding_model: all-MiniLM-L6-v2  # Sentence transformer model for embeddings.
+                                     # Supports provider/model format: ollama/nomic-embed-text
   embedding_dimension: 384           # Must match model output dimension
   embedding_max_input_chars: 6000    # Truncate embedding input to avoid model context overflow
   similarity_threshold: 0.65         # Minimum similarity score for retrieval
   cleanup_threshold: 10000           # Memory count triggering cleanup
   window_turns: 3                    # Sliding window: carry recalled memories forward N turns (0 = off)
   
-  # Memory extraction AI settings
-  extraction_provider: ollama        # AI provider for memory extraction (ollama, openai, etc.)
-  extraction_model: llama3.2         # Model for memory extraction (use smaller/cheaper models)
+  # Memory extraction AI settings.
+  # Both fields support provider/model format (e.g. copilot/Qwen3.6-27B or ollama/llama3.2).
+  # When extraction_model includes a provider prefix, extraction_provider is ignored.
+  extraction_provider: ollama        # Fallback provider when extraction_model has no prefix
+  extraction_model: llama3.2         # Model for memory extraction — use provider/model for cross-provider routing
   extraction_batch_size: 10          # Number of memories to batch before writing
   extraction_batch_interval: 5.0    # Seconds to wait before writing batch
   extraction_min_chars: 150          # Skip extraction if turn content is shorter than this
@@ -129,12 +146,13 @@ dream:
   max_tool_rounds: 10        # Absolute max rounds for dream agent (safety net)
   # provider: ollama         # Optional — falls back to memory.extraction_provider
   # model: qwen3:32b          # Optional — falls back to memory.extraction_model
+                             # Supports provider/model format: copilot/Qwen3.6-27B
 
 # Vision processing settings
 vision:
   enabled: true                      # Master switch for vision features
   fallback_provider: ollama          # Provider for vision analysis when chat model lacks vision
-  fallback_model: llama3.2-vision:11b # Vision model for image description
+  fallback_model: llama3.2-vision:11b # Vision model — supports provider/model format
   max_image_size: 5242880            # 5MB limit per image (5 * 1024 * 1024)
 
 # File paths (relative to project root)
@@ -247,21 +265,23 @@ paths:
 #     args: ["serve"]
 #     reconnect: true
 #
-#   # ── Playwright MCP — real browser for web research ────────────────────────
-#   # Exposes tools prefixed mcp_playwright_: browser_navigate, browser_snapshot,
-#   # browser_screenshot, browser_click, browser_type, browser_scroll, etc.
-#   # Requires Playwright Chromium to be installed (nami_start.sh handles this).
-#   # Anti-bot config (disable automation flags, realistic UA) lives in
-#   # config/playwright-mcp.json — edit that file to tune fingerprint/stealth.
+#   # ── Playwright Stealth MCP — real browser with anti-detection JS ──────────
+#   # Drop-in replacement for @playwright/mcp that injects anti-detection
+#   # JavaScript (navigator, WebGL, permissions patching) via addInitScript()
+#   # before every page load. Uses same config/playwright-mcp.json format.
+#   # Exposes tools: browser_navigate, browser_snapshot, browser_click,
+#   # browser_type, browser_screenshot, browser_scroll, browser_go_back,
+#   # browser_evaluate, browser_inject_script.
+#   # Requires: npm install in mcp/playwright-stealth-mcp (nami_start.sh handles).
 #   playwright:
 #     enabled: true
-#     command: npx
+#     command: node
 #     args:
-#       - "-y"
-#       - "@playwright/mcp@latest"
+#       - "/app/mcp/playwright-stealth-mcp/index.js"
 #       - "--config"
 #       - "/app/config/playwright-mcp.json"
 #       - "--isolated"    # fresh browser context per session (no cross-session cookie leakage)
+#     cwd: /app/mcp/playwright-stealth-mcp
 #     reconnect: true
 
 

@@ -318,12 +318,16 @@ function initDiscordClient() {
     process.exit(1);
   }
 
+  const maxHistory = parseInt(String(namiConfig.max_history || '50'), 10);
   const permittedUsers = new Set(
     (namiConfig.permitted_users || []).map(id => String(id))
   );
   const aiChannels = new Set(
     (namiConfig.ai_channels || []).map(id => String(id))
   );
+
+  // Apply configured history limit (previously hardcoded to 50)
+  history.maxMessages = maxHistory;
 
   discordClient = new Client({
     intents: [
@@ -468,7 +472,7 @@ function registerPendingResponse(conversationId, channel, discordMessage) {
       entry.queueTimer = null;
       entry.phase = 'processing';
       entry.typingTimer = await startTypingLoop(channel);
-      entry._armInactivity();
+      entry.resetInactivity();
     },
 
     /** Called by handleWsMessage on status.update — resets inactivity clock. */

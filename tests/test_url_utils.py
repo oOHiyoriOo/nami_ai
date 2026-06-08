@@ -123,8 +123,3 @@ def test_dns_rebinding_mixed_ips():
         (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 0)),
     ]):
         assert is_safe_url("http://dual.internal") is False
-
-
-if __name__ == "__main__":
-    import pytest
-    pytest.main([__file__, "-v"])

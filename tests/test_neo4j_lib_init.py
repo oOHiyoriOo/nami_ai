@@ -27,7 +27,6 @@ def test_get_valid_properties_episodic_memory():
         "source", "authorUserId", "creationTimestamp", "location", "concepts",
     }
     assert props == expected, f"EpisodicMemory properties mismatch: {props ^ expected}"
-    return True
 
 
 def test_get_valid_properties_knowledge_unit():
@@ -38,7 +37,6 @@ def test_get_valid_properties_knowledge_unit():
         "validUntil", "authorUserId", "concepts",
     }
     assert props == expected, f"KnowledgeUnit properties mismatch: {props ^ expected}"
-    return True
 
 
 def test_get_valid_properties_procedural_unit():
@@ -49,7 +47,6 @@ def test_get_valid_properties_procedural_unit():
         "creationTimestamp", "concepts",
     }
     assert props == expected, f"ProceduralUnit properties mismatch: {props ^ expected}"
-    return True
 
 
 def test_get_valid_properties_invalid_type_raises():
@@ -59,7 +56,6 @@ def test_get_valid_properties_invalid_type_raises():
     except ValueError as e:
         assert "Invalid memory_type" in str(e)
         assert "NonExistentType" in str(e)
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +65,12 @@ def test_get_valid_properties_invalid_type_raises():
 def test_is_valid_memory_type_known_types():
     for t in ("EpisodicMemory", "KnowledgeUnit", "ProceduralUnit"):
         assert is_valid_memory_type(t), f"Expected True for {t}"
-    return True
 
 
 def test_is_valid_memory_type_unknown_type():
     assert not is_valid_memory_type("FooBar")
     assert not is_valid_memory_type("")
     assert not is_valid_memory_type("episodicmemory")  # case-sensitive
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +82,6 @@ def test_is_valid_property_known_property():
     assert is_valid_property("EpisodicMemory", "emotionalValence")
     assert is_valid_property("KnowledgeUnit", "statement")
     assert is_valid_property("ProceduralUnit", "name")
-    return True
 
 
 def test_is_valid_property_common_property():
@@ -101,26 +94,18 @@ def test_is_valid_property_common_property():
             assert is_valid_property(mem_type, prop), (
                 f"Expected True for common property {prop} on {mem_type}"
             )
-    return True
 
 
 def test_is_valid_property_unknown_property():
     assert not is_valid_property("EpisodicMemory", "nonExistentProp")
     assert not is_valid_property("KnowledgeUnit", "bogusField")
-    return True
 
 
 def test_is_valid_property_invalid_type():
     assert not is_valid_property("FooBar", "summary")
     assert not is_valid_property("", "summary")
-    return True
 
 
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

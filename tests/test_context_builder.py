@@ -10,6 +10,10 @@ Covers:
 - build_context: memories injected when enable_memory=True and user_id present
 - build_context: memories NOT fetched when user_id is None
 - build_context: original messages are always the last entries
+- _trim_messages_to_token_budget: respects token budget, preserves system messages
+- _trim_messages_to_token_budget: handles empty input, returns most recent first
+- build_context: trims messages when max_history_tokens is set
+- build_context: does NOT trim when max_history_tokens=0 (disabled)
 """
 
 import asyncio
@@ -75,12 +79,12 @@ def test_user_info_includes_all_fields():
         channel_name="#lab-chat",
         guild_name="Zero Lab",
         is_dm=False,
-        user_name="testuser",
+        user_name="alice",
     )
 
     info = _parse_user_info(ctx)
     assert not (info["user"] != "Zero"), "condition failed"
-    assert not (info["username"] != "testuser"), "condition failed"
+    assert not (info["username"] != "alice"), "condition failed"
     assert not (info["user_id"] != "discord:zero"), "condition failed"
     assert not (info["platform"] != "Discord"), "condition failed"
     assert not (info["channel"] != "#lab-chat"), "condition failed"
@@ -248,7 +252,149 @@ def test_build_context_original_messages_last():
     assert not (result[-1] != original[0]), "condition failed"
 
 
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))
+# ---------------------------------------------------------------------------
+# _trim_messages_to_token_budget — unit tests
+# ---------------------------------------------------------------------------
+
+def test_trim_preserves_system_messages():
+    """System messages always survive trimming regardless of budget."""
+    msgs = [
+        {"role": "system", "content": "x" * 4000},      # ~1000 tokens
+        {"role": "user", "content": "hello"},
+    ]
+    result = ContextBuilder._trim_messages_to_token_budget(msgs, max_tokens=1)
+    assert not (len(result) != 2), "condition failed: system message removed"
+    assert not (result[0]["role"] != "system"), "condition failed"
+
+
+def test_trim_respects_budget():
+    """Only the most recent messages that fit within the token budget are kept."""
+    msgs = [
+        {"role": "user", "content": "a" * 400},     # 100 tokens (oldest)
+        {"role": "assistant", "content": "c" * 800}, # 200 tokens (too big)
+        {"role": "user", "content": "b" * 400},      # 100 tokens (newest)
+    ]
+    result = ContextBuilder._trim_messages_to_token_budget(msgs, max_tokens=150)
+    # Reversed: b*400 (100t, budget→50), c*800 (200t > 50, break)
+    # Only b*400 kept
+    assert not (len(result) != 1), f"condition failed: expected 1, got {len(result)}"
+    assert not (result[0]["content"] != "b" * 400), "condition failed"
+
+
+def test_trim_empty_input():
+    """Empty message lists return empty list."""
+    result = ContextBuilder._trim_messages_to_token_budget([], max_tokens=100)
+    assert not (result != []), "condition failed"
+
+
+def test_trim_keeps_single_message():
+    """A single message under budget is kept."""
+    msgs = [{"role": "user", "content": "hello"}]
+    result = ContextBuilder._trim_messages_to_token_budget(msgs, max_tokens=100)
+    assert not (result != msgs), "condition failed"
+
+
+def test_trim_all_system_messages():
+    """List of only system messages returns all of them."""
+    msgs = [
+        {"role": "system", "content": "a" * 4000},
+        {"role": "system", "content": "b" * 4000},
+    ]
+    result = ContextBuilder._trim_messages_to_token_budget(msgs, max_tokens=100)
+    assert not (len(result) != 2), "condition failed"
+
+
+def test_trim_zero_budget():
+    """max_tokens=0 drops all non-system messages."""
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hello"},
+    ]
+    result = ContextBuilder._trim_messages_to_token_budget(msgs, max_tokens=0)
+    assert not (len(result) != 1), "condition failed"
+    assert not (result[0]["role"] != "system"), "condition failed"
+
+
+def test_trim_messages_with_tool_role():
+    """Tool messages are treated as chat (not system) and counted against budget."""
+    msgs = [
+        {"role": "user", "content": "a" * 400},
+        {"role": "tool", "name": "search", "content": "b" * 400},
+    ]
+    result = ContextBuilder._trim_messages_to_token_budget(msgs, max_tokens=101)
+    assert not (len(result) != 2), "condition failed"
+
+
+def test_trim_no_content_field():
+    """Messages without content don't consume budget."""
+    msgs = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": ""},
+        {"role": "user", "content": "bye"},
+    ]
+    result = ContextBuilder._trim_messages_to_token_budget(msgs, max_tokens=1)
+    # empty-content message + 1 token for "bye" should fit
+    assert not (len(result) != 2), f"condition failed: got {len(result)}"
+    assert not (result[-1]["content"] != "bye"), "condition failed"
+
+
+# ---------------------------------------------------------------------------
+# build_context — token budget integration
+# ---------------------------------------------------------------------------
+
+def test_build_context_trims_when_token_budget_set():
+    """Messages are trimmed when max_history_tokens is specified."""
+    mock_sp = MagicMock()
+    mock_sp.get_prompt = AsyncMock(return_value="sys")
+
+    cb = ContextBuilder(
+        system_prompt_provider=mock_sp,
+        memory_service=None,
+        max_history_tokens=10,  # ~40 characters
+    )
+
+    long_msg = "x" * 200  # ~50 chars, ~12 tokens — exceeds budget
+    short_msg = "hi"       # 2 chars, ~0 tokens — fits
+
+    async def run():
+        return await cb.build_context(
+            messages=[
+                {"role": "user", "content": long_msg},
+                {"role": "user", "content": short_msg},
+            ],
+            user_id=None,
+            enable_personality=False,
+            enable_memory=False,
+        )
+
+    result = asyncio.run(run())
+    # Only the short message should survive (long one dropped)
+    contents = [m["content"] for m in result if m["role"] == "user"]
+    assert not (long_msg in contents), "condition failed: long message should be trimmed"
+    assert not (short_msg not in contents), "condition failed: short message should be kept"
+
+
+def test_build_context_no_trim_when_disabled():
+    """All messages pass through when max_history_tokens=0."""
+    mock_sp = MagicMock()
+    mock_sp.get_prompt = AsyncMock(return_value="sys")
+
+    cb = ContextBuilder(
+        system_prompt_provider=mock_sp,
+        memory_service=None,
+        max_history_tokens=0,
+    )
+
+    long_msg = "x" * 20000
+
+    async def run():
+        return await cb.build_context(
+            messages=[{"role": "user", "content": long_msg}],
+            user_id=None,
+            enable_personality=False,
+            enable_memory=False,
+        )
+
+    result = asyncio.run(run())
+    contents = [m["content"] for m in result if m["role"] == "user"]
+    assert not (long_msg not in contents), "condition failed: message should not be trimmed"

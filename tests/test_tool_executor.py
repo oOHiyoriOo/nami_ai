@@ -9,12 +9,14 @@ Covers:
 - Unknown tool returns error string
 - Max calls limit stops the loop
 - on_tool_start / on_tool_done callbacks are fired
+- Unsafe tool exceptions are caught and wrapped (issue #280)
 """
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -97,14 +99,11 @@ def test_assistant_message_prepended():
                         if (isinstance(m, Message) and m.role == "tool")
                         or (isinstance(m, dict) and m.get("role") == "tool"))
         if asst_idx >= tool_idx:
-            print(f"  [FAIL] assistant message (idx={asst_idx}) must precede tool message (idx={tool_idx})")
-            return False
+            assert False, f"assistant message (idx={asst_idx}) must precede tool message (idx={tool_idx})"
     except StopIteration:
-        print(f"  [FAIL] missing assistant or tool message in history. roles={roles}")
-        return False
+        assert False, f"missing assistant or tool message in history. roles={roles}"
 
     print("  [PASS]")
-    return True
 
 
 def test_tool_call_id_threaded():
@@ -135,13 +134,10 @@ def test_tool_call_id_threaded():
     asyncio.run(_run_loop(provider, [Message(role="user", content="hi")], tools, initial))
 
     if not captured_tool_msg:
-        print("  [FAIL] no tool message captured")
-        return False
+        assert False, "no tool message captured"
     if captured_tool_msg[0].tool_call_id != "call_abc123":
-        print(f"  [FAIL] tool_call_id={captured_tool_msg[0].tool_call_id!r} (expected 'call_abc123')")
-        return False
+        assert False, f"tool_call_id={captured_tool_msg[0].tool_call_id!r} (expected 'call_abc123')"
     print("  [PASS]")
-    return True
 
 
 def test_tool_executed_and_result_passed():
@@ -172,12 +168,9 @@ def test_tool_executed_and_result_passed():
 
     if call_args.get("expression") != "6*7":
         print(f"  [FAIL] tool called with args={call_args}")
-        return False
     if "42 is the answer" not in captured_tool_content:
         print(f"  [FAIL] tool result not in history: {captured_tool_content}")
-        return False
     print("  [PASS]")
-    return True
 
 
 def test_unknown_tool_returns_error():
@@ -202,10 +195,8 @@ def test_unknown_tool_returns_error():
     asyncio.run(_run_loop(provider, [Message(role="user", content="hi")], tools, initial))
 
     if not any("Unknown tool" in c for c in captured_tool_content):
-        print(f"  [FAIL] expected 'Unknown tool' in results: {captured_tool_content}")
-        return False
+        assert False, f"expected 'Unknown tool' in results: {captured_tool_content}"
     print("  [PASS]")
-    return True
 
 
 def test_max_calls_limit():
@@ -234,10 +225,8 @@ def test_max_calls_limit():
     ))
 
     if call_count[0] > 2:
-        print(f"  [FAIL] tool called {call_count[0]} times (max=2)")
-        return False
+        assert False, f"tool called {call_count[0]} times (max=2)"
     print("  [PASS]")
-    return True
 
 
 def test_callbacks_fired():
@@ -266,13 +255,10 @@ def test_callbacks_fired():
     ))
 
     if started != ["my_tool"]:
-        print(f"  [FAIL] started={started}")
-        return False
+        assert False, f"started={started}"
     if not done:
-        print("  [FAIL] on_tool_done never called")
-        return False
+        assert False, "on_tool_done never called"
     print("  [PASS]")
-    return True
 
 
 def test_multiple_safe_tools_fire_callbacks():
@@ -313,13 +299,10 @@ def test_multiple_safe_tools_fire_callbacks():
     ))
 
     if sorted(started) != ["tool_a", "tool_b", "tool_c"]:
-        print(f"  [FAIL] started={started} (expected all 3 tools)")
-        return False
+        assert False, f"started={started} (expected all 3 tools)"
     if not done:
-        print("  [FAIL] on_tool_done never called")
-        return False
+        assert False, "on_tool_done never called"
     print("  [PASS]")
-    return True
 
 
 def test_no_tool_calls_returns_immediately():
@@ -333,11 +316,9 @@ def test_no_tool_calls_returns_immediately():
     result, tool_msgs = asyncio.run(_run_loop(provider, [], [], initial))
 
     if result.content != "Just a plain response.":
-        print(f"  [FAIL] content={result.content!r}")
-        return False
+        assert False, f"content={result.content!r}"
     provider.chat.assert_not_called()
     print("  [PASS]")
-    return True
 
 
 def test_max_rounds_limit():
@@ -377,10 +358,8 @@ def test_max_rounds_limit():
     ))
 
     if call_count[0] > 3:
-        print(f"  [FAIL] tool called {call_count[0]} times (max_rounds=3)")
-        return False
+        assert False, f"tool called {call_count[0]} times (max_rounds=3)"
     print(f"  [PASS] called {call_count[0]}x")
-    return True
 
 
 def test_tool_error_escalation():
@@ -421,15 +400,11 @@ def test_tool_error_escalation():
 
     if not captured_system:
         print("  [FAIL] no system message captured")
-        return False
     if not any("Try a different approach" in m for m in captured_system):
         print(f"  [FAIL] guidance not found in: {captured_system}")
-        return False
     if not any("HTTP 4xx" in m for m in captured_system):
         print(f"  [FAIL] error category label missing in: {captured_system}")
-        return False
     print("  [PASS]")
-    return True
 
 
 def test_error_escalation_different_tools():
@@ -481,14 +456,11 @@ def test_error_escalation_different_tools():
 
     # tool_a was called twice, tool_b once — neither hits 3
     if captured_system:
-        print(f"  [FAIL] unexpected escalation: {captured_system}")
-        return False
+        assert False, f"unexpected escalation: {captured_system}"
 
     if tool_calls_log != ["a", "b", "a"]:
-        print(f"  [FAIL] unexpected call order: {tool_calls_log}")
-        return False
+        assert False, f"unexpected call order: {tool_calls_log}"
     print("  [PASS]")
-    return True
 
 
 def test_error_escalation_disabled():
@@ -525,10 +497,8 @@ def test_error_escalation_disabled():
     ))
 
     if captured_system:
-        print(f"  [FAIL] escalation fired when disabled: {captured_system}")
-        return False
+        assert False, f"escalation fired when disabled: {captured_system}"
     print("  [PASS]")
-    return True
 
 
 def test_error_pattern_classify():
@@ -557,14 +527,80 @@ def test_error_pattern_classify():
     for text, expected in cases:
         result = _classify_error(text)
         if result != expected:
-            print(f"  [FAIL] classify({text!r}) = {result!r}, expected {expected!r}")
-            return False
+            assert False, f"classify({text!r}) = {result!r}, expected {expected!r}"
 
     print("  [PASS]")
-    return True
 
 
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
+def test_unsafe_tool_exception_is_caught():
+    """Unsafe tool exceptions escape _execute_one → caught and wrapped like safe tools (issue #280)."""
+    print("Test: unsafe tool exception → caught and wrapped")
+
+    captured_results = []
+
+    async def fake_chat(messages, tools, **kwargs):
+        for m in messages:
+            if isinstance(m, Message) and m.role == "tool":
+                captured_results.append(m.content)
+        return ChatResponse(content="Done.", model="llama3.2")
+
+    provider = MagicMock()
+    provider.chat = fake_chat
+
+    tool_call = _make_tool_call("crashy_tool", {})
+    initial = ChatResponse(content="", tool_calls=[tool_call], model="llama3.2")
+
+    async def fake_tool(**kwargs):
+        return "ok"
+
+    tools = [{"type": "function", "function": {"name": "crashy_tool"}, "func": fake_tool}]
+
+    with patch("lib.services.tool_executor._execute_one", side_effect=KeyError("malformed_tool_call")):
+        asyncio.run(_run_loop(provider, [Message(role="user", content="go")], tools, initial))
+
+    if not captured_results:
+        assert False, "no tool result captured"
+    if "Tool 'crashy_tool' failed: KeyError" not in captured_results[0]:
+        assert False, f"unexpected result: {captured_results[0]!r}"
+    print("  [PASS]")
+
+
+def test_unsafe_tool_logs_after_execution():
+    """Unsafe tools log AFTER execution (like safe tools), not before (issue #280)."""
+    print("Test: unsafe tool logs after execution")
+
+    log_records = []
+
+    class LogCapture(logging.Handler):
+        def emit(self, record):
+            log_records.append(record)
+
+    handler = LogCapture()
+    handler.setLevel(logging.INFO)
+    logger = logging.getLogger("root")
+    logger.addHandler(handler)
+
+    async def fake_tool(**kwargs):
+        return "result"
+
+    async def fake_chat(messages, tools, **kwargs):
+        return ChatResponse(content="Done.", model="llama3.2")
+
+    provider = MagicMock()
+    provider.chat = fake_chat
+
+    tool_call = _make_tool_call("sequential_tool", {"arg": "val"})
+    initial = ChatResponse(content="", tool_calls=[tool_call], model="llama3.2")
+    tools = [{"type": "function", "function": {"name": "sequential_tool"}, "func": fake_tool}]
+
+    try:
+        asyncio.run(_run_loop(provider, [Message(role="user", content="go")], tools, initial))
+
+        info_logs = [r for r in log_records if r.levelno == logging.INFO and "(sequential)" in r.getMessage()]
+        if not info_logs:
+            assert False, "no sequential tool log message found"
+        if "(sequential)" not in info_logs[0].getMessage():
+            assert False, f"log missing (sequential) tag: {info_logs[0].getMessage()}"
+        print("  [PASS]")
+    finally:
+        logger.removeHandler(handler)

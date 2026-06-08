@@ -9,7 +9,7 @@ import logging
 
 from lib.global_registry import g_data
 from OllamaTools import tool_error, tool_success
-from lib.services.memory_extractor import slugify
+from lib.utils import slugify
 
 
 async def create_location(name: str, description: str = "") -> str:

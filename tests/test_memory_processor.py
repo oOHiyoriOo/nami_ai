@@ -150,7 +150,7 @@ def test_process_memories_stores_valid():
     }
 
     async def run():
-        with patch("lib.global_registry.g_data") as mock_gd:
+        with patch("lib.services.memory_processor.g_data") as mock_gd:
             mock_gd.get = lambda key, default=None: g_data_patch.get(key, default)
             await process_memories(
                 message_content="User: The sky is blue — I've always found this fascinating because it relates to Rayleigh scattering, where shorter wavelengths of light are scattered more by the atmosphere.\nAssistant: Yes, you are absolutely right. The blue color of the sky is a direct result of this optical phenomenon discovered by Lord Rayleigh in the 19th century.",
@@ -183,7 +183,7 @@ def test_process_memories_skips_duplicate():
     }
 
     async def run():
-        with patch("lib.global_registry.g_data") as mock_gd:
+        with patch("lib.services.memory_processor.g_data") as mock_gd:
             mock_gd.get = lambda key, default=None: g_data_patch.get(key, default)
             await process_memories(
                 message_content="User: already known.\nAssistant: Yes.",
@@ -215,7 +215,7 @@ def test_process_memories_skips_invalid():
     }
 
     async def run():
-        with patch("lib.global_registry.g_data") as mock_gd:
+        with patch("lib.services.memory_processor.g_data") as mock_gd:
             mock_gd.get = lambda key, default=None: g_data_patch.get(key, default)
             await process_memories(
                 message_content="something",
@@ -234,7 +234,7 @@ def test_process_memories_no_services_exits_silently():
     from unittest.mock import patch
 
     async def run():
-        with patch("lib.global_registry.g_data") as mock_gd:
+        with patch("lib.services.memory_processor.g_data") as mock_gd:
             mock_gd.get = lambda key, default=None: None
             await process_memories("content", "user", "name", "conv")
 
@@ -242,9 +242,3 @@ def test_process_memories_no_services_exits_silently():
         asyncio.run(run())
     except Exception as e:
         assert False, f"raised: {e}"
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

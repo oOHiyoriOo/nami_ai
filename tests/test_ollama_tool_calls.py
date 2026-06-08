@@ -305,8 +305,3 @@ def test_normalize_tool_call_raw_fallback():
 
 
 # ── main ────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

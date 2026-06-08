@@ -1,32 +1,50 @@
 """
-Tests for lib/services/nami_session_cache.py — persistent session cache.
+Tests for lib/services/nami_session_cache.py + nami_session_io.py + nami_session_cleanup.py.
 
 Covers:
-- generate_session_id format
-- init_cache_dir → session.json creation
-- cache_edit → saves original (.orig) + modified files
-- finalize_cache → result/verification update
-- read_cached_file / apply_cached_file
-- list_sessions / get_session_detail
-- reset_cache (all, specific, keep_failed, dry_run)
-- cleanup_old_sessions
-- register_commit
+- generate_session_id format  [nsc]
+- init_cache_dir → session.json creation  [nsc]
+- cache_edit → saves original (.orig) + modified files  [nscio]
+- finalize_cache → result/verification update  [nsc]
+- read_cached_file / apply_cached_file  [nscio]
+- list_sessions / get_session_detail  [nsc]
+- reset_cache (all, specific, keep_failed, dry_run)  [nscclean]
+- cleanup_old_sessions  [nscclean]
+- register_commit  [nscio]
 """
 
 import json
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
-# Import the module without going through lib.services.__init__
+# Import the modules without going through lib.services.__init__
 import importlib.util
 
+_base = Path(__file__).parent.parent / "lib" / "services"
+
 spec = importlib.util.spec_from_file_location(
-    "nsc", Path(__file__).parent.parent / "lib" / "services" / "nami_session_cache.py"
+    "lib.services.nami_session_cache", _base / "nami_session_cache.py"
 )
 nsc = importlib.util.module_from_spec(spec)
+sys.modules["lib.services.nami_session_cache"] = nsc
 spec.loader.exec_module(nsc)
+
+spec_io = importlib.util.spec_from_file_location(
+    "lib.services.nami_session_io", _base / "nami_session_io.py"
+)
+nscio = importlib.util.module_from_spec(spec_io)
+sys.modules["lib.services.nami_session_io"] = nscio
+spec_io.loader.exec_module(nscio)
+
+spec_clean = importlib.util.spec_from_file_location(
+    "lib.services.nami_session_cleanup", _base / "nami_session_cleanup.py"
+)
+nscclean = importlib.util.module_from_spec(spec_clean)
+sys.modules["lib.services.nami_session_cleanup"] = nscclean
+spec_clean.loader.exec_module(nscclean)
 
 
 # ── generate_session_id ───────────────────────────────────────────────
@@ -44,7 +62,7 @@ def test_generate_session_id_format():
 
 def test_generate_session_id_special_chars():
     sid = nsc.generate_session_id("Fix bug: #123 in lib/utils!")
-    assert "_fix-bug-123-in-libutils" in sid
+    assert "_fix-bug-123-in-lib-utils" in sid
 
 def test_generate_session_id_empty():
     sid = nsc.generate_session_id("")
@@ -80,7 +98,7 @@ def test_cache_edit_saves_orig_and_modified(tmp_path):
     original = "line1\nline2\nline3"
     modified = "line1\nCHANGED\nline3"
 
-    nsc.cache_edit(session_dir, "lib/mod.py", original, modified)
+    nscio.cache_edit(session_dir, "lib/mod.py", original, modified)
 
     # Check .orig file exists
     orig_path = session_dir / "lib" / "mod.py.orig"
@@ -99,9 +117,9 @@ def test_cache_edit_saves_orig_and_modified(tmp_path):
 
 def test_cache_edit_dedup_changed_files(tmp_path):
     session_dir = nsc.init_cache_dir(tmp_path, "test-id", "abc", "test")
-    nsc.cache_edit(session_dir, "a.py", "orig_a", "mod_a")
-    nsc.cache_edit(session_dir, "a.py", "orig_a2", "mod_a2")  # same file
-    nsc.cache_edit(session_dir, "b.py", "orig_b", "mod_b")
+    nscio.cache_edit(session_dir, "a.py", "orig_a", "mod_a")
+    nscio.cache_edit(session_dir, "a.py", "orig_a2", "mod_a2")  # same file
+    nscio.cache_edit(session_dir, "b.py", "orig_b", "mod_b")
 
     data = nsc.read_session_json(session_dir)
     assert data["changed_files"] == ["a.py", "b.py"]
@@ -153,33 +171,33 @@ def test_finalize_cache_aborted(tmp_path):
 
 def test_read_cached_file(tmp_path):
     session_dir = nsc.init_cache_dir(tmp_path, "test-id", "abc", "test")
-    nsc.cache_edit(session_dir, "lib/mod.py", "original", "modified")
+    nscio.cache_edit(session_dir, "lib/mod.py", "original", "modified")
 
-    content = nsc.read_cached_file(session_dir, "lib/mod.py")
+    content = nscio.read_cached_file(session_dir, "lib/mod.py")
     assert content == "modified"
 
 
 def test_read_cached_file_not_found(tmp_path):
     session_dir = nsc.init_cache_dir(tmp_path, "test-id", "abc", "test")
-    assert nsc.read_cached_file(session_dir, "nonexistent.py") is None
+    assert nscio.read_cached_file(session_dir, "nonexistent.py") is None
 
 
 def test_apply_cached_file(tmp_path):
     session_dir = nsc.init_cache_dir(tmp_path, "test-id", "abc", "test")
-    nsc.cache_edit(session_dir, "lib/mod.py", "original", "modified")
+    nscio.cache_edit(session_dir, "lib/mod.py", "original", "modified")
 
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "lib").mkdir(parents=True)
 
-    result = nsc.apply_cached_file(session_dir, "lib/mod.py", project_root)
+    result = nscio.apply_cached_file(session_dir, "lib/mod.py", project_root)
     assert result is True
     assert (project_root / "lib" / "mod.py").read_text() == "modified"
 
 
 def test_apply_cached_file_not_found(tmp_path):
     session_dir = nsc.init_cache_dir(tmp_path, "test-id", "abc", "test")
-    result = nsc.apply_cached_file(session_dir, "nonexistent.py", tmp_path)
+    result = nscio.apply_cached_file(session_dir, "nonexistent.py", tmp_path)
     assert result is False
 
 
@@ -203,7 +221,7 @@ def test_list_sessions(tmp_path):
 
 def test_get_session_detail(tmp_path):
     session_dir = nsc.init_cache_dir(tmp_path, "sess1", "abc", "Test")
-    nsc.cache_edit(session_dir, "lib/x.py", "orig", "mod")
+    nscio.cache_edit(session_dir, "lib/x.py", "orig", "mod")
     nsc.finalize_cache(session_dir, "passed", {"smoke_test_passed": True})
 
     detail = nsc.get_session_detail(tmp_path, "sess1")
@@ -224,7 +242,7 @@ def test_reset_cache_all(tmp_path):
     nsc.init_cache_dir(tmp_path, "sess1", "abc", "s1")
     nsc.init_cache_dir(tmp_path, "sess2", "def", "s2")
 
-    result = nsc.reset_cache(tmp_path)
+    result = nscclean.reset_cache(tmp_path)
     assert result["deleted"] == 2
     assert not list((tmp_path / nsc.CACHE_DIR_NAME).iterdir())
 
@@ -233,7 +251,7 @@ def test_reset_cache_specific(tmp_path):
     nsc.init_cache_dir(tmp_path, "sess1", "abc", "s1")
     nsc.init_cache_dir(tmp_path, "sess2", "def", "s2")
 
-    result = nsc.reset_cache(tmp_path, session_id="sess1")
+    result = nscclean.reset_cache(tmp_path, session_id="sess1")
     assert result["deleted"] == 1
     assert result["sessions"][0]["session_id"] == "sess1"
 
@@ -250,7 +268,7 @@ def test_reset_cache_keep_failed(tmp_path):
     nsc.finalize_cache(s2, "rolled_back")
     nsc.finalize_cache(s3, "aborted")
 
-    result = nsc.reset_cache(tmp_path, keep_failed=True)
+    result = nscclean.reset_cache(tmp_path, keep_failed=True)
     assert result["deleted"] == 2
     assert result["kept"] == 1
 
@@ -261,21 +279,21 @@ def test_reset_cache_keep_failed(tmp_path):
 def test_reset_cache_dry_run(tmp_path):
     nsc.init_cache_dir(tmp_path, "sess1", "abc", "s1")
 
-    result = nsc.reset_cache(tmp_path, dry_run=True)
+    result = nscclean.reset_cache(tmp_path, dry_run=True)
     assert result["deleted"] == 1
     # File should still be there
     assert (tmp_path / nsc.CACHE_DIR_NAME / "sess1").exists()
 
 
 def test_reset_cache_nonexistent(tmp_path):
-    result = nsc.reset_cache(tmp_path)
+    result = nscclean.reset_cache(tmp_path)
     assert result["deleted"] == 0
     assert result["sessions"] == []
 
 
 def test_reset_cache_specific_not_found(tmp_path):
     nsc.init_cache_dir(tmp_path, "sess1", "abc", "s1")
-    result = nsc.reset_cache(tmp_path, session_id="not-there")
+    result = nscclean.reset_cache(tmp_path, session_id="not-there")
     assert "error" in result
     assert "not found" in result["error"]
 
@@ -297,7 +315,7 @@ def test_cleanup_old_sessions(tmp_path):
     s2 = nsc.init_cache_dir(tmp_path, "recent-sess", "def", "Recent session")
     nsc.finalize_cache(s2, "passed")
 
-    deleted = nsc.cleanup_old_sessions(tmp_path, max_age_days=7)
+    deleted = nscclean.cleanup_old_sessions(tmp_path, max_age_days=7)
     assert deleted == 1
 
     remaining = [d.name for d in (tmp_path / nsc.CACHE_DIR_NAME).iterdir()]
@@ -307,20 +325,20 @@ def test_cleanup_old_sessions(tmp_path):
 
 def test_cleanup_old_or_empty_cache(tmp_path):
     """No cache directory → no error."""
-    assert nsc.cleanup_old_sessions(tmp_path / "nonexistent") == 0
+    assert nscclean.cleanup_old_sessions(tmp_path / "nonexistent") == 0
 
 
 # ── register_commit ────────────────────────────────────────────────────
 
 def test_register_commit(tmp_path):
     session_dir = nsc.init_cache_dir(tmp_path, "test-id", "abc", "test")
-    nsc.register_commit(session_dir, "a1b2c3", "nami: fix something")
+    nscio.register_commit(session_dir, "a1b2c3", "nami: fix something")
 
     data = nsc.read_session_json(session_dir)
     assert len(data["commits"]) == 1
     assert data["commits"][0]["hash"] == "a1b2c3"
     assert data["commits"][0]["message"] == "nami: fix something"
 
-    nsc.register_commit(session_dir, "d4e5f6", "nami: fix another")
+    nscio.register_commit(session_dir, "d4e5f6", "nami: fix another")
     data = nsc.read_session_json(session_dir)
     assert len(data["commits"]) == 2

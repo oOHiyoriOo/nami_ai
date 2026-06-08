@@ -12,10 +12,7 @@ import uuid
 
 import aiosqlite
 
-from lib.global_registry import g_data
-from OllamaTools import tool_error, tool_success
-
-_DEFAULT_DB = "scheduler.db"
+from OllamaTools import tool_error, tool_success, _db_path
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS research_queue (
@@ -31,13 +28,6 @@ CREATE TABLE IF NOT EXISTS research_queue (
     next_retry_at INTEGER
 )
 """
-
-
-def _db_path() -> str:
-    cfg = g_data.get("cfg")
-    if cfg:
-        return cfg.data.get("scheduler", {}).get("db_path", _DEFAULT_DB)
-    return _DEFAULT_DB
 
 
 async def _ensure_table(db_path: str) -> None:

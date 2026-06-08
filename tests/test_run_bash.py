@@ -203,9 +203,3 @@ def test_command_with_quotes_and_escapes():
     result = _parse_result(raw)
     assert result.get("success"), f"[FAIL] Quoted/escaped command should succeed: {result}"
     sandbox.run.assert_called_once_with(cmd)
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

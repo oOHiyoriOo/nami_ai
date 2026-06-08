@@ -23,7 +23,7 @@ _STUB_MODS = ['neo4j', 'discord', 'asyncssh', 'ollama', 'openai',
               'aiofiles', 'discord.ext', 'discord.ext.commands',
               'sentence_transformers', 'torch', 'colorama', 'asyncpg',
               'bs4', 'beautifulsoup4', 'sklearn', 'sklearn.cluster',
-              'PIL', 'matplotlib', 'scipy', 'numpy', 'pandas',
+              'PIL', 'matplotlib', 'scipy', 'numpy',
               'discord_sdk', 'aiohttp']
 # NOTE: lib.services.ai_pipeline is NOT in _STUB_MODS — it is handled
 # by the explicit block below which gives pipeline_ctx a real ContextVar.
@@ -56,6 +56,7 @@ from OllamaTools.schedule_task import (
     cancel_task,
     get_tool,
 )
+from lib.services.task_scheduler import TaskCreateOptions
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -245,7 +246,7 @@ def test_schedule_task_success():
     scheduler.create_task.assert_awaited_once()
     call_kwargs = scheduler.create_task.call_args.kwargs
     assert call_kwargs.get("prompt") == "do a thing", f"[FAIL] Wrong prompt passed to scheduler: {call_kwargs.get('prompt')!r}"
-    assert call_kwargs.get("origin") == "user", f"[FAIL] Expected origin='user', got {call_kwargs.get('origin')!r}"
+    assert call_kwargs["options"].origin == "user", f"[FAIL] Expected origin='user', got {call_kwargs['options'].origin!r}"
 
 
 
@@ -281,8 +282,8 @@ def test_schedule_self_task_success():
     assert data.get("success"), f"[FAIL] Expected success=True, got {data}"
 
     call_kwargs = scheduler.create_task.call_args.kwargs
-    assert call_kwargs.get("origin") == "ai", f"[FAIL] Expected origin='ai', got {call_kwargs.get('origin')!r}"
-    assert call_kwargs.get("ttl_runs") == 5, f"[FAIL] Expected ttl_runs=5, got {call_kwargs.get('ttl_runs')!r}"
+    assert call_kwargs["options"].origin == "ai", f"[FAIL] Expected origin='ai', got {call_kwargs['options'].origin!r}"
+    assert call_kwargs["options"].ttl_runs == 5, f"[FAIL] Expected ttl_runs=5, got {call_kwargs['options'].ttl_runs!r}"
 
     # Response should include origin and ttl_runs for AI tasks
     assert (data.get("data") or {}).get("origin") == "ai", f"[FAIL] Response should include origin='ai', got {data.get('data')}"
@@ -322,7 +323,7 @@ def test_schedule_self_task_zero_ttl():
     assert data.get("success"), f"[FAIL] Expected success=True, got {data}"
 
     call_kwargs = scheduler.create_task.call_args.kwargs
-    assert call_kwargs.get("ttl_runs") is None, f"[FAIL] ttl_runs=0 should be passed as None, got {call_kwargs.get('ttl_runs')!r}"
+    assert call_kwargs["options"].ttl_runs is None, f"[FAIL] ttl_runs=0 should be passed as None, got {call_kwargs['options'].ttl_runs!r}"
 
 
 
@@ -358,7 +359,7 @@ def test_schedule_self_task_notify_target():
     assert data.get("success"), f"[FAIL] Expected success=True, got {data}"
 
     call_kwargs = scheduler.create_task.call_args.kwargs
-    assert call_kwargs.get("adapter") == "discord", f"[FAIL] Expected adapter='discord', got {call_kwargs.get('adapter')!r}"
+    assert call_kwargs["options"].adapter == "discord", f"[FAIL] Expected adapter='discord', got {call_kwargs['options'].adapter!r}"
     assert call_kwargs.get("conversation_id") == "987654321", f"[FAIL] Expected conversation_id='987654321', got {call_kwargs.get('conversation_id')!r}"
 
 
@@ -395,7 +396,7 @@ def test_schedule_self_task_notify_target_log():
     assert data.get("success"), f"[FAIL] Expected success=True, got {data}"
 
     call_kwargs = scheduler.create_task.call_args.kwargs
-    assert call_kwargs.get("adapter") == "none", f"[FAIL] Expected adapter='none' for log target, got {call_kwargs.get('adapter')!r}"
+    assert call_kwargs["options"].adapter == "none", f"[FAIL] Expected adapter='none' for log target, got {call_kwargs['options'].adapter!r}"
 
 
 
@@ -436,7 +437,7 @@ def test_schedule_self_task_cron_auto_recurrence():
     assert data.get("success"), f"[FAIL] Expected success=True, got {data}"
 
     call_kwargs = scheduler.create_task.call_args.kwargs
-    assert call_kwargs.get("recurrence") == "0 9 * * 1-5", f"[FAIL] Expected recurrence cron, got {call_kwargs.get('recurrence')!r}"
+    assert call_kwargs["options"].recurrence == "0 9 * * 1-5", f"[FAIL] Expected recurrence cron, got {call_kwargs['options'].recurrence!r}"
 
 
 
@@ -634,7 +635,7 @@ def test_create_task_with_recurrence():
     assert data.get("success"), f"[FAIL] Expected success=True, got {data}"
 
     call_kwargs = scheduler.create_task.call_args.kwargs
-    assert call_kwargs.get("recurrence") == "hourly", f"[FAIL] 'every hour' should resolve to 'hourly', got {call_kwargs.get('recurrence')!r}"
+    assert call_kwargs["options"].recurrence == "hourly", f"[FAIL] 'every hour' should resolve to 'hourly', got {call_kwargs['options'].recurrence!r}"
 
 
 
@@ -691,13 +692,8 @@ def test_create_task_one_shot_recurrence():
     assert data.get("success"), f"[FAIL] Expected success=True, got {data}"
 
     call_kwargs = scheduler.create_task.call_args.kwargs
-    assert call_kwargs.get("recurrence") is None, f"[FAIL] 'one-shot' should resolve to None, got {call_kwargs.get('recurrence')!r}"
+    assert call_kwargs["options"].recurrence is None, f"[FAIL] 'one-shot' should resolve to None, got {call_kwargs['options'].recurrence!r}"
 
 
 
 # ── main ───────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

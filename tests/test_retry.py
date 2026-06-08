@@ -325,8 +325,3 @@ async def test_with_retry_default_parameters():
 
 
 # --- runner ---
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))

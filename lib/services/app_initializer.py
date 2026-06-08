@@ -37,6 +37,7 @@ from lib.services.heartbeat_modules import (
 from lib.services.tool_response_log import ToolResponseLog
 from lib.services.message_state_cache import MessageStateCache
 from lib.services.hot_reload_registry import HotReloadRegistry
+from lib.utils import resolve_provider_model
 
 
 async def _on_reload_tools(event: Event) -> None:
@@ -129,8 +130,11 @@ async def _reload_context_builder(data: dict) -> None:
     memory_window_turns = (
         cfg.data.get("memory", {}).get("window_turns", 3) if cfg else 3
     )
+    max_history_tokens = (
+        cfg.data.get("bot", {}).get("max_history_tokens", 0) if cfg else 0
+    )
 
-    new_cb = cb_module.ContextBuilder(sys_prompt, memory_service, memory_window_turns)
+    new_cb = cb_module.ContextBuilder(sys_prompt, memory_service, memory_window_turns, max_history_tokens)
     g_data.register("context_builder", new_cb)
     logging.info("[hot-reload] ContextBuilder reloaded")
 
@@ -264,10 +268,14 @@ class AppInitializer:
         a background task regenerates them via Ollama.
         """
         memory_settings = self.config.data.get('memory', {})
-        embedding_model = memory_settings.get('embedding_model', 'nomic-embed-text')
+        embedding_provider, embedding_model = resolve_provider_model(
+            memory_settings.get('embedding_model'),
+            fallback_provider='ollama',
+            fallback_model='nomic-embed-text',
+        )
         embedding_dimension = int(memory_settings.get('embedding_dimension', 768))
         embedding_max_input_chars = int(memory_settings.get('embedding_max_input_chars', 6000))
-        ollama_url = self.config.data.get('providers', {}).get('ollama', {}).get('url', 'http://localhost:11434')
+        ollama_url = self.config.data.get('providers', {}).get(embedding_provider, {}).get('url', 'http://localhost:11434')
 
         memory_db_instance = g_data.get_or_create(
             "memory_db",
@@ -365,11 +373,16 @@ class AppInitializer:
         memory_service = MemoryService(memory_db, similarity_threshold=similarity_threshold)
         g_data.get_or_create("memory_service", lambda: memory_service)
 
+        ext_provider, ext_model = resolve_provider_model(
+            memory_settings.get('extraction_model'),
+            fallback_provider=memory_settings.get('extraction_provider', 'ollama'),
+            fallback_model='llama3.2',
+        )
         memory_extractor = MemoryExtractor(
             provider_registry=ProviderRegistry,
             memory_db=memory_db,
-            provider_name=memory_settings.get('extraction_provider', 'ollama'),
-            model_name=memory_settings.get('extraction_model')
+            provider_name=ext_provider,
+            model_name=ext_model,
         )
         g_data.get_or_create("memory_extractor", lambda: memory_extractor)
 
@@ -401,7 +414,8 @@ class AppInitializer:
 
         memory_service = g_data.get("memory_service")
         memory_window_turns = self.config.data.get("memory", {}).get("window_turns", 3)
-        context_builder = ContextBuilder(sys_prompt_instance, memory_service, memory_window_turns)
+        max_history_tokens = self.config.data.get("bot", {}).get("max_history_tokens", 0)
+        context_builder = ContextBuilder(sys_prompt_instance, memory_service, memory_window_turns, max_history_tokens)
         g_data.get_or_create("context_builder", lambda: context_builder)
 
         model_cache = ModelCache()
@@ -608,6 +622,11 @@ class AppInitializer:
         msg_cache = g_data.get("message_state_cache")
         if msg_cache:
             await msg_cache.stop()
+
+        # Stop tool response log
+        tool_log = g_data.get("tool_response_log")
+        if tool_log:
+            await tool_log.stop()
 
         # Stop adapter manager
         adapter_manager = g_data.get("adapter_manager")

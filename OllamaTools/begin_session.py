@@ -9,9 +9,10 @@ import json
 import logging
 from pathlib import Path
 
+from lib.utils import resolve_project_root
+
 from lib.services.nami_session_cache import generate_session_id, init_cache_dir
 from lib.services.session_manager import (
-    _resolve_project_root,
     create_safe_point,
     create_session_marker,
     delete_session_marker,
@@ -30,7 +31,7 @@ async def begin_session(description: str = "") -> str:
     Returns:
         JSON with session state.
     """
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
 
     # Refuse if an active session already exists
     existing = read_session_marker(project_root)

@@ -29,7 +29,6 @@ def test_concept_to_dict_serializable_only():
     allowed = (str, int, float, bool, list, dict, type(None))
     for k, v in d.items():
         assert isinstance(v, allowed), f"Key '{k}' has value of type {type(v)} — not serializable"
-    return True
 
 
 def test_person_to_dict_serializable_only():
@@ -39,7 +38,6 @@ def test_person_to_dict_serializable_only():
     allowed = (str, int, float, bool, list, dict, type(None))
     for k, v in d.items():
         assert isinstance(v, allowed), f"Key '{k}' has value of type {type(v)} — not serializable"
-    return True
 
 
 def test_location_to_dict_serializable_only():
@@ -49,7 +47,6 @@ def test_location_to_dict_serializable_only():
     allowed = (str, int, float, bool, list, dict, type(None))
     for k, v in d.items():
         assert isinstance(v, allowed), f"Key '{k}' has value of type {type(v)} — not serializable"
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -60,21 +57,18 @@ def test_concept_iter_via_dict():
     """dict(Concept(...)) produces the same result as to_dict()."""
     c = Concept(id="c2", name="Tag", keywords=["ai", "ml"])
     assert dict(c) == c.to_dict(), "dict(entity) must match to_dict()"
-    return True
 
 
 def test_person_iter_via_dict():
     """dict(Person(...)) produces the same result as to_dict()."""
     p = Person(id=2, name="Bob", nickname=None)
     assert dict(p) == p.to_dict(), "dict(entity) must match to_dict()"
-    return True
 
 
 def test_location_iter_via_dict():
     """dict(Location(...)) produces the same result as to_dict()."""
     loc = Location(id="loc2", name="Place", planeOfExistence="Material")
     assert dict(loc) == loc.to_dict(), "dict(entity) must match to_dict()"
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +82,6 @@ def test_concept_json_valid():
     parsed = json.loads(raw)
     assert isinstance(parsed, dict), f"Expected dict from JSON, got {type(parsed)}"
     assert parsed == c.to_dict(), "JSON round-trip must match to_dict()"
-    return True
 
 
 def test_person_json_valid():
@@ -98,7 +91,6 @@ def test_person_json_valid():
     parsed = json.loads(raw)
     assert isinstance(parsed, dict), f"Expected dict from JSON, got {type(parsed)}"
     assert parsed == p.to_dict(), "JSON round-trip must match to_dict()"
-    return True
 
 
 def test_location_json_valid():
@@ -108,7 +100,6 @@ def test_location_json_valid():
     parsed = json.loads(raw)
     assert isinstance(parsed, dict), f"Expected dict from JSON, got {type(parsed)}"
     assert parsed == loc.to_dict(), "JSON round-trip must match to_dict()"
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -119,21 +110,18 @@ def test_concept_get_label():
     """Concept.get_label() returns 'CONCEPT'."""
     c = Concept(id="l1", name="LabelTest")
     assert c.get_label() == "CONCEPT", f"Expected 'CONCEPT', got '{c.get_label()}'"
-    return True
 
 
 def test_person_get_label():
     """Person.get_label() returns 'Person'."""
     p = Person(id=1, name="LabelPerson")
     assert p.get_label() == "Person", f"Expected 'Person', got '{p.get_label()}'"
-    return True
 
 
 def test_location_get_label():
     """Location.get_label() returns 'Location'."""
     loc = Location(id="l1", name="LabelTest")
     assert loc.get_label() == "Location", f"Expected 'Location', got '{loc.get_label()}'"
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +135,6 @@ def test_concept_get_properties_excludes_none():
     assert "description" not in props, "description=None should be excluded"
     assert "id" in props
     assert "name" in props
-    return True
 
 
 def test_person_get_properties_excludes_none():
@@ -157,7 +144,6 @@ def test_person_get_properties_excludes_none():
     assert "nickname" not in props, "nickname=None should be excluded"
     assert "id" in props
     assert "name" in props
-    return True
 
 
 def test_concept_get_properties_includes_falsy():
@@ -170,7 +156,6 @@ def test_concept_get_properties_includes_falsy():
     assert "keywords" in props, "Empty list 'keywords' should be present"
     assert props["id"] == ""
     assert props["keywords"] == []
-    return True
 
 
 def test_person_get_properties_includes_falsy():
@@ -182,7 +167,6 @@ def test_person_get_properties_includes_falsy():
     assert "nickname" in props, "Empty string 'nickname' should be present"
     assert props["id"] == 0
     assert props["name"] == ""
-    return True
 
 
 def test_location_get_properties_excludes_none():
@@ -193,7 +177,6 @@ def test_location_get_properties_excludes_none():
     assert "planeOfExistence" not in props, "planeOfExistence=None should be excluded"
     assert "id" in props
     assert "name" in props
-    return True
 
 
 def test_location_get_properties_includes_falsy():
@@ -206,7 +189,6 @@ def test_location_get_properties_includes_falsy():
     assert "planeOfExistence" in props, "Empty string 'planeOfExistence' should be present"
     assert props["id"] == ""
     assert props["name"] == ""
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +206,6 @@ def test_concept_list_to_dicts():
     assert all(isinstance(d, dict) for d in result)
     assert result[0]["id"] == "x1"
     assert result[1]["id"] == "x2"
-    return True
 
 
 def test_person_list_to_dicts():
@@ -238,7 +219,6 @@ def test_person_list_to_dicts():
     assert all(isinstance(d, dict) for d in result)
     assert result[0]["id"] == 10
     assert result[1]["name"] == "Dave"
-    return True
 
 
 def test_list_to_dicts_mixed_entities_and_dicts():
@@ -253,7 +233,6 @@ def test_list_to_dicts_mixed_entities_and_dicts():
     assert result[0] == {"id": "m1", "name": "Mixed1", "description": None, "keywords": []}
     assert result[1] == {"id": "plain", "name": "PlainDict"}  # plain dict passes through
     assert result[2]["id"] == "m2"
-    return True
 
 
 def test_location_list_to_dicts():
@@ -267,7 +246,6 @@ def test_location_list_to_dicts():
     assert all(isinstance(d, dict) for d in result)
     assert result[0]["id"] == "x1"
     assert result[1]["id"] == "x2"
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -281,14 +259,12 @@ def test_episodic_memory_to_dict_serializable_only():
     allowed = (str, int, float, bool, list, dict, type(None))
     for k, v in d.items():
         assert isinstance(v, allowed), f"Key '{k}' has value of type {type(v)} — not serializable"
-    return True
 
 
 def test_episodic_memory_iter_via_dict():
     """dict(EpisodicMemory(...)) produces the same result as to_dict()."""
     em = EpisodicMemory(id="em2", summary="Event", emotionalIntensity=7)
     assert dict(em) == em.to_dict(), "dict(entity) must match to_dict()"
-    return True
 
 
 def test_episodic_memory_json_valid():
@@ -298,14 +274,12 @@ def test_episodic_memory_json_valid():
     parsed = json.loads(raw)
     assert isinstance(parsed, dict), f"Expected dict from JSON, got {type(parsed)}"
     assert parsed == em.to_dict(), "JSON round-trip must match to_dict()"
-    return True
 
 
 def test_episodic_memory_get_label():
     """EpisodicMemory.get_label() returns 'EpisodicMemory'."""
     em = EpisodicMemory(id="l1", summary="LabelTest")
     assert em.get_label() == "EpisodicMemory", f"Expected 'EpisodicMemory', got '{em.get_label()}'"
-    return True
 
 
 def test_episodic_memory_get_properties_excludes_none():
@@ -316,7 +290,6 @@ def test_episodic_memory_get_properties_excludes_none():
     assert "emotionalValence" not in props, "emotionalValence=None should be excluded"
     assert "id" in props
     assert "summary" in props
-    return True
 
 
 def test_episodic_memory_get_properties_includes_falsy():
@@ -329,7 +302,6 @@ def test_episodic_memory_get_properties_includes_falsy():
     assert "concepts" in props, "Empty list 'concepts' should be present"
     assert props["id"] == ""
     assert props["emotionalIntensity"] == 0
-    return True
 
 
 def test_episodic_memory_list_to_dicts():
@@ -343,7 +315,6 @@ def test_episodic_memory_list_to_dicts():
     assert all(isinstance(d, dict) for d in result)
     assert result[0]["id"] == "x1"
     assert result[1]["id"] == "x2"
-    return True
 
 
 def test_episodic_memory_list_to_dicts_mixed():
@@ -357,7 +328,6 @@ def test_episodic_memory_list_to_dicts_mixed():
     assert len(result) == 3
     assert result[1] == {"id": "plain", "summary": "PlainDict"}
     assert result[2]["id"] == "m2"
-    return True
 
 
 def test_episodic_memory_str_repr():
@@ -367,7 +337,6 @@ def test_episodic_memory_str_repr():
     r = repr(em)
     assert isinstance(s, str) and len(s) > 0, "__str__() must return non-empty string"
     assert isinstance(r, str) and len(r) > 0, "__repr__() must return non-empty string"
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -381,14 +350,12 @@ def test_knowledge_unit_to_dict_serializable_only():
     allowed = (str, int, float, bool, list, dict, type(None))
     for k, v in d.items():
         assert isinstance(v, allowed), f"Key '{k}' has value of type {type(v)} — not serializable"
-    return True
 
 
 def test_knowledge_unit_iter_via_dict():
     """dict(KnowledgeUnit(...)) produces the same result as to_dict()."""
     ku = KnowledgeUnit(id="ku2", statement="A fact", type="assertion")
     assert dict(ku) == ku.to_dict(), "dict(entity) must match to_dict()"
-    return True
 
 
 def test_knowledge_unit_json_valid():
@@ -398,14 +365,12 @@ def test_knowledge_unit_json_valid():
     parsed = json.loads(raw)
     assert isinstance(parsed, dict), f"Expected dict from JSON, got {type(parsed)}"
     assert parsed == ku.to_dict(), "JSON round-trip must match to_dict()"
-    return True
 
 
 def test_knowledge_unit_get_label():
     """KnowledgeUnit.get_label() returns 'KnowledgeUnit'."""
     ku = KnowledgeUnit(id="l1", statement="LabelTest")
     assert ku.get_label() == "KnowledgeUnit", f"Expected 'KnowledgeUnit', got '{ku.get_label()}'"
-    return True
 
 
 def test_knowledge_unit_get_properties_excludes_none():
@@ -416,7 +381,6 @@ def test_knowledge_unit_get_properties_excludes_none():
     assert "confidenceScore" not in props, "confidenceScore=None should be excluded"
     assert "id" in props
     assert "statement" in props
-    return True
 
 
 def test_knowledge_unit_get_properties_includes_falsy():
@@ -429,7 +393,6 @@ def test_knowledge_unit_get_properties_includes_falsy():
     assert "concepts" in props, "Empty list 'concepts' should be present"
     assert props["id"] == ""
     assert props["confidenceScore"] == 0
-    return True
 
 
 def test_knowledge_unit_list_to_dicts():
@@ -443,7 +406,6 @@ def test_knowledge_unit_list_to_dicts():
     assert all(isinstance(d, dict) for d in result)
     assert result[0]["id"] == "x1"
     assert result[1]["id"] == "x2"
-    return True
 
 
 def test_knowledge_unit_list_to_dicts_mixed():
@@ -457,7 +419,6 @@ def test_knowledge_unit_list_to_dicts_mixed():
     assert len(result) == 3
     assert result[1] == {"id": "plain", "statement": "PlainDict"}
     assert result[2]["id"] == "m2"
-    return True
 
 
 def test_knowledge_unit_str_repr():
@@ -467,7 +428,6 @@ def test_knowledge_unit_str_repr():
     r = repr(ku)
     assert isinstance(s, str) and len(s) > 0, "__str__() must return non-empty string"
     assert isinstance(r, str) and len(r) > 0, "__repr__() must return non-empty string"
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -481,14 +441,12 @@ def test_procedural_unit_to_dict_serializable_only():
     allowed = (str, int, float, bool, list, dict, type(None))
     for k, v in d.items():
         assert isinstance(v, allowed), f"Key '{k}' has value of type {type(v)} — not serializable"
-    return True
 
 
 def test_procedural_unit_iter_via_dict():
     """dict(ProceduralUnit(...)) produces the same result as to_dict()."""
     pu = ProceduralUnit(id="pu2", name="A skill", steps="Step 1, Step 2")
     assert dict(pu) == pu.to_dict(), "dict(entity) must match to_dict()"
-    return True
 
 
 def test_procedural_unit_json_valid():
@@ -498,14 +456,12 @@ def test_procedural_unit_json_valid():
     parsed = json.loads(raw)
     assert isinstance(parsed, dict), f"Expected dict from JSON, got {type(parsed)}"
     assert parsed == pu.to_dict(), "JSON round-trip must match to_dict()"
-    return True
 
 
 def test_procedural_unit_get_label():
     """ProceduralUnit.get_label() returns 'ProceduralUnit'."""
     pu = ProceduralUnit(id="l1", name="LabelTest")
     assert pu.get_label() == "ProceduralUnit", f"Expected 'ProceduralUnit', got '{pu.get_label()}'"
-    return True
 
 
 def test_procedural_unit_get_properties_excludes_none():
@@ -516,7 +472,6 @@ def test_procedural_unit_get_properties_excludes_none():
     assert "proficiencyLevel" not in props, "proficiencyLevel=None should be excluded"
     assert "id" in props
     assert "name" in props
-    return True
 
 
 def test_procedural_unit_get_properties_includes_falsy():
@@ -529,7 +484,6 @@ def test_procedural_unit_get_properties_includes_falsy():
     assert "concepts" in props, "Empty list 'concepts' should be present"
     assert props["id"] == ""
     assert props["proficiencyLevel"] == 0
-    return True
 
 
 def test_procedural_unit_list_to_dicts():
@@ -543,7 +497,6 @@ def test_procedural_unit_list_to_dicts():
     assert all(isinstance(d, dict) for d in result)
     assert result[0]["id"] == "x1"
     assert result[1]["id"] == "x2"
-    return True
 
 
 def test_procedural_unit_list_to_dicts_mixed():
@@ -557,7 +510,6 @@ def test_procedural_unit_list_to_dicts_mixed():
     assert len(result) == 3
     assert result[1] == {"id": "plain", "name": "PlainDict"}
     assert result[2]["id"] == "m2"
-    return True
 
 
 def test_procedural_unit_str_repr():
@@ -567,14 +519,8 @@ def test_procedural_unit_str_repr():
     r = repr(pu)
     assert isinstance(s, str) and len(s) > 0, "__str__() must return non-empty string"
     assert isinstance(r, str) and len(r) > 0, "__repr__() must return non-empty string"
-    return True
 
 
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

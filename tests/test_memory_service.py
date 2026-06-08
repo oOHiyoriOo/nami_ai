@@ -247,8 +247,3 @@ def test_context_entry_score_zero_included():
 # ============================================================
 # Runner
 # ============================================================
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))

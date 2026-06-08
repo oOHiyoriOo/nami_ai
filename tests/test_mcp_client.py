@@ -537,7 +537,3 @@ def main():
     if failed:
         sys.exit(1)
     print("[SUCCESS] All tests passed!")
-
-
-if __name__ == "__main__":
-    main()

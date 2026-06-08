@@ -385,7 +385,3 @@ def test_bool_coerced_respects_range():
     }
     with pytest.raises(ToolArgumentValidationError, match=">= 5"):
         validate_tool_arguments(tool_schema, {"count": True})
-
-
-if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v"]))

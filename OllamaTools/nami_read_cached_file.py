@@ -9,11 +9,10 @@ past changes before deciding whether to apply them.
 import json
 import logging
 
-from lib.services.nami_session_cache import (
-    read_cached_file,
-    _cache_root,
-    _resolve_project_root,
-)
+from lib.utils import resolve_project_root
+
+from lib.services.nami_session_cache import _cache_root
+from lib.services.nami_session_io import read_cached_file
 
 
 async def nami_read_cached_file(session_id: str, file_path: str) -> str:
@@ -27,7 +26,7 @@ async def nami_read_cached_file(session_id: str, file_path: str) -> str:
     Returns:
         The file content as a string in the response. Does NOT restore.
     """
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
     cache_root = _cache_root(project_root)
     session_dir = cache_root / session_id
 

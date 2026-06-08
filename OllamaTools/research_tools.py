@@ -18,16 +18,7 @@ import time
 import aiosqlite
 
 from lib.global_registry import g_data
-
-_DEFAULT_DB = "scheduler.db"
-
-
-def _db_path() -> str:
-    cfg = g_data.get("cfg")
-    if cfg:
-        return cfg.data.get("scheduler", {}).get("db_path", _DEFAULT_DB)
-    return _DEFAULT_DB
-
+from OllamaTools import _db_path
 
 # ---------------------------------------------------------------------------
 # Tool implementations
@@ -134,7 +125,7 @@ async def research_store_finding(
                 row = await cur.fetchone()
                 if row:
                     topic_name = row[0]
-    except Exception:
+    except aiosqlite.OperationalError:
         pass
 
     memory_args = {
@@ -214,6 +205,10 @@ async def research_fail_topic(topic_id: str, reason: str) -> str:
     """
     Mark a research topic as failed so it can be retried or skipped.
 
+    On first failure the topic is set to ``failed_retry`` with an exponential
+    backoff.  The CuriosityModule will promote it back to ``pending`` when the
+    backoff expires.  After too many failures it is permanently marked ``failed``.
+
     Args:
         topic_id: UUID of the research topic.
         reason:   Why the research failed (rate limit, topic too broad, etc.).
@@ -223,14 +218,62 @@ async def research_fail_topic(topic_id: str, reason: str) -> str:
     """
     path = _db_path()
     try:
+        cfg = g_data.get("cfg")
+        max_retries = 3
+        backoff_base_hours = 1
+        if cfg:
+            hb_cfg = cfg.data.get("heartbeat", {})
+            mod_cfg = hb_cfg.get("modules", {}).get("curiosity", {})
+            max_retries = mod_cfg.get("retry_max_attempts", 3)
+            backoff_base_hours = mod_cfg.get("retry_backoff_base_hours", 1)
+
         async with aiosqlite.connect(path) as db:
-            await db.execute(
-                "UPDATE research_queue SET status = 'failed', result = ? WHERE id = ?",
-                (f"FAILED: {reason}", topic_id),
-            )
-            await db.commit()
-        logging.warning(f"[research] Topic {topic_id} failed: {reason}")
-        return json.dumps({"failed": True, "topic_id": topic_id, "reason": reason})
+            # Get current retry count
+            async with db.execute(
+                "SELECT retry_count FROM research_queue WHERE id = ?", (topic_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            current_retries = (row[0] or 0) if row else 0
+
+            if current_retries >= max_retries:
+                # Permanently failed — no more retries
+                await db.execute(
+                    "UPDATE research_queue SET status = 'failed', result = ? WHERE id = ?",
+                    (f"FAILED (max retries): {reason}", topic_id),
+                )
+                await db.commit()
+                logging.warning(
+                    f"[research] Topic {topic_id} permanently failed after "
+                    f"{current_retries} retries: {reason}"
+                )
+                return json.dumps({
+                    "failed": True, "permanent": True,
+                    "topic_id": topic_id, "reason": reason,
+                    "retries": current_retries,
+                })
+            else:
+                # Schedule retry with exponential backoff
+                new_retry_count = current_retries + 1
+                backoff_seconds = backoff_base_hours * 3600 * (4 ** (new_retry_count - 1))
+                next_retry_at = int(time.time()) + backoff_seconds
+                await db.execute(
+                    "UPDATE research_queue SET status = 'failed_retry', "
+                    "retry_count = ?, next_retry_at = ?, result = ? "
+                    "WHERE id = ?",
+                    (new_retry_count, next_retry_at, f"FAILED: {reason}", topic_id),
+                )
+                await db.commit()
+                backoff_str = f"{backoff_seconds // 3600}h{(backoff_seconds % 3600) // 60}m"
+                logging.warning(
+                    f"[research] Topic {topic_id} failed (retry {new_retry_count}/{max_retries}): "
+                    f"{reason} — backoff={backoff_str}"
+                )
+                return json.dumps({
+                    "failed": True, "retry_scheduled": True,
+                    "topic_id": topic_id, "reason": reason,
+                    "retry_count": new_retry_count, "max_retries": max_retries,
+                    "backoff": backoff_str,
+                })
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -293,7 +336,7 @@ def get_tool() -> list[dict]:
                     "properties": {
                         "status": {
                             "type": "string",
-                            "description": "'pending', 'in_progress', 'done', 'failed', or 'all'. Default: 'pending'.",
+                            "description": "'pending', 'in_progress', 'done', 'failed', 'failed_retry', or 'all'. Default: 'pending'.",
                         }
                     },
                     "required": [],

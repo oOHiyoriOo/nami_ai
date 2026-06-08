@@ -12,6 +12,7 @@ lives in exactly one place.
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -19,6 +20,7 @@ from collections import Counter
 from collections.abc import Callable, Awaitable
 
 from lib.ai_providers import Message
+from lib.global_registry import g_data
 from lib.services.event_bus import Event
 from lib.services.tool_context import _strip_meta
 from lib.tool_argument_validator import validate_tool_arguments, ToolArgumentValidationError
@@ -132,7 +134,6 @@ async def _store_tool_responses(
 
     Returns a list of ``(msg, uuid_or_none)`` pairs for placeholder construction.
     """
-    from lib.global_registry import g_data
     tool_log = g_data.get("tool_response_log")
     event_bus = g_data.get("event_bus")
 
@@ -192,6 +193,95 @@ def _build_placeholder_messages(
     return result
 
 
+async def _execute_safe_tools(
+    safe_calls: list[dict],
+    tools: list[dict],
+    round_count: int,
+    repeat_count: int,
+    max_rounds: int,
+    max_calls: int,
+    on_tool_start: Callable[[str], Awaitable[None]] | None,
+    tool_results: dict[str, str],
+    call_count: int,
+) -> int:
+    """Execute safe tools concurrently with asyncio.gather."""
+    bump_activity()
+    if on_tool_start:
+        for tc in safe_calls:
+            result = on_tool_start(tc["function"]["name"])
+            if inspect.isawaitable(result):
+                await result
+    results = await asyncio.gather(
+        *[_execute_one(tc, tools) for tc in safe_calls],
+        return_exceptions=True,
+    )
+    for tc, result in zip(safe_calls, results):
+        bump_activity()
+        call_count += 1
+        tool_results[tc.get("id", tc["function"]["name"])] = (
+            str(result) if not isinstance(result, Exception)
+            else f"Tool '{tc['function']['name']}' failed: {type(result).__name__}"
+        )
+        if isinstance(result, Exception):
+            logging.error(f"[tool_executor] Safe tool {tc['function']['name']} raised: {result}")
+        else:
+            args_info = _format_args(tc)
+            logging.info(f"[tool_executor] [call {call_count}, round {round_count}/{max_rounds}, repeat {repeat_count}/{max_calls}] {tc['function']['name']}{args_info} (parallel)")
+    return call_count
+
+
+async def _execute_unsafe_tools(
+    unsafe_calls: list[dict],
+    tools: list[dict],
+    round_count: int,
+    repeat_count: int,
+    max_rounds: int,
+    max_calls: int,
+    on_tool_start: Callable[[str], Awaitable[None]] | None,
+    tool_results: dict[str, str],
+    call_count: int,
+) -> int:
+    """Execute unsafe tools sequentially."""
+    for tc in unsafe_calls:
+        call_count += 1
+        tool_name = tc["function"]["name"]
+        bump_activity()
+        if on_tool_start:
+            result = on_tool_start(tool_name)
+            if inspect.isawaitable(result):
+                await result
+        try:
+            result = await _execute_one(tc, tools)
+            tool_results[tc.get("id", tool_name)] = result
+            args_info = _format_args(tc)
+            logging.info(f"[tool_executor] [call {call_count}, round {round_count}/{max_rounds}, repeat {repeat_count}/{max_calls}] {tool_name}{args_info} (sequential)")
+        except Exception as e:
+            logging.error(f"[tool_executor] Unsafe tool {tool_name} raised: {e}", exc_info=True)
+            tool_results[tc.get("id", tool_name)] = f"Tool '{tool_name}' failed: {type(e).__name__}"
+    return call_count
+
+
+def _append_tool_results(
+    current_response,
+    tool_results: dict[str, str],
+    current_messages: list[Message],
+    tool_messages: list[Message],
+    error_counts: Counter[tuple[str, str]] | None,
+) -> None:
+    """Append tool results to message history and classify errors."""
+    for tc in current_response.tool_calls:
+        key = tc.get("id", tc.get("function", {}).get("name", "unknown"))
+        content = tool_results.get(key, "No result")
+        msg = Message(role="tool", content=content, tool_call_id=tc.get("id"))
+        current_messages.append(msg)
+        tool_messages.append(msg)
+
+        if error_counts is not None:
+            category = _classify_error(content)
+            if category:
+                error_counts[(tc["function"]["name"], category)] += 1
+
+
 async def execute_tool_loop(
     provider,
     messages: list[Message],
@@ -203,6 +293,7 @@ async def execute_tool_loop(
     error_escalation_threshold: int = 3,
     on_tool_start: Callable[[str], Awaitable[None]] | None = None,
     on_tool_done: Callable[[], Awaitable[None]] | None = None,
+    use_inline_placeholders: bool = False,
 ):
     """
     Execute the tool call loop until the model returns a final text response.
@@ -241,6 +332,13 @@ async def execute_tool_loop(
                                      Default 3.  Set to 0 to disable.
         on_tool_start:    Optional async callback(tool_name) called before each tool runs.
         on_tool_done:     Optional async callback() called after all tools in a round finish.
+        use_inline_placeholders: When True, each round's full tool responses are stored in
+                          ToolResponseLog and replaced with ``[TOOL_RESPONSE:<uuid>]``
+                          placeholders in ``current_messages`` before the next provider call.
+                          Keeps context lean across many rounds (ideal for dream/research
+                          loops). The AI can recall any result via ``retrieve_tool_response``.
+                          When False (default), full results are kept in context for the
+                          entire loop — correct for the chat pipeline where rounds are few.
 
     Returns:
         Tuple of ``(final_response, tool_messages)`` where ``tool_messages`` is
@@ -256,7 +354,7 @@ async def execute_tool_loop(
     repeat_count = 0
     last_round_sig: str = ""
     tool_messages: list[Message] = []
-    error_counts: Counter[tuple[str, str]] = Counter() if error_escalation_threshold > 0 else None  # type: ignore[valid-type]
+    error_counts: Counter[tuple[str, str]] | None = Counter() if error_escalation_threshold > 0 else None
     escalated: set[tuple[str, str]] = set()
 
     while current_response.tool_calls:
@@ -280,55 +378,35 @@ async def execute_tool_loop(
 
         tool_results: dict[str, str] = {}
 
-        # --- Safe tools: run concurrently ---
         if safe_calls:
-            bump_activity()
-            if on_tool_start:
-                for tc in safe_calls:
-                    await on_tool_start(tc["function"]["name"])
-            results = await asyncio.gather(
-                *[_execute_one(tc, tools) for tc in safe_calls],
-                return_exceptions=True,
+            call_count = await _execute_safe_tools(
+                safe_calls, tools, round_count, repeat_count,
+                max_rounds, max_calls, on_tool_start, tool_results, call_count,
             )
-            for tc, result in zip(safe_calls, results):
-                bump_activity()
-                call_count += 1
-                tool_results[tc.get("id", tc["function"]["name"])] = (
-                    str(result) if not isinstance(result, Exception)
-                    else f"Tool '{tc['function']['name']}' failed: {type(result).__name__}"
-                )
-                if isinstance(result, Exception):
-                    logging.error(f"[tool_executor] Safe tool {tc['function']['name']} raised: {result}")
-                else:
-                    args_info = _format_args(tc)
-                    logging.info(f"[tool_executor] [call {call_count}, round {round_count}/{max_rounds}, repeat {repeat_count}/{max_calls}] {tc['function']['name']}{args_info} (parallel)")
 
-        # --- Unsafe tools: run sequentially ---
-        for tc in unsafe_calls:
-            call_count += 1
-            tool_name = tc["function"]["name"]
-            bump_activity()
-            if on_tool_start:
-                await on_tool_start(tool_name)
-            logging.info(f"[tool_executor] [call {call_count}, round {round_count}/{max_rounds}, repeat {repeat_count}/{max_calls}] {tool_name}{_format_args(tc)} (sequential)")
-            result = await _execute_one(tc, tools)
-            tool_results[tc.get("id", tool_name)] = result
+        if unsafe_calls:
+            call_count = await _execute_unsafe_tools(
+                unsafe_calls, tools, round_count, repeat_count,
+                max_rounds, max_calls, on_tool_start, tool_results, call_count,
+            )
 
         if on_tool_done:
             await on_tool_done()
 
-        # Append all tool results to history in original call order.
-        for tc in current_response.tool_calls:
-            key = tc.get("id", tc.get("function", {}).get("name", "unknown"))
-            content = tool_results.get(key, "No result")
-            msg = Message(role="tool", content=content, tool_call_id=tc.get("id"))
-            current_messages.append(msg)
-            tool_messages.append(msg)
+        round_tool_start = len(tool_messages)
 
-            if error_counts is not None:
-                category = _classify_error(content)
-                if category:
-                    error_counts[(tc["function"]["name"], category)] += 1
+        _append_tool_results(
+            current_response, tool_results, current_messages,
+            tool_messages, error_counts,
+        )
+
+        if use_inline_placeholders:
+            current_round_msgs = tool_messages[round_tool_start:]
+            if current_round_msgs:
+                stored = await _store_tool_responses(current_round_msgs)
+                placeholders = _build_placeholder_messages(stored)
+                n = len(current_round_msgs)
+                current_messages[-n:] = placeholders
 
         if error_counts is not None:
             _escalate_errors(error_counts, escalated, error_escalation_threshold, current_messages)
@@ -336,8 +414,12 @@ async def execute_tool_loop(
         current_response = await provider.chat(current_messages, sanitized_tools, model=model)
 
     if tool_messages:
-        stored = await _store_tool_responses(tool_messages)
-        placeholder_messages = _build_placeholder_messages(stored)
+        if use_inline_placeholders:
+            # Already stored and replaced round-by-round above; nothing left to do.
+            placeholder_messages = []
+        else:
+            stored = await _store_tool_responses(tool_messages)
+            placeholder_messages = _build_placeholder_messages(stored)
     else:
         placeholder_messages = []
 
@@ -351,8 +433,17 @@ def _find_tool(tool_name: str, tools: list[dict]) -> dict | None:
 
 async def _execute_one(tool_call: dict, tools: list[dict]) -> str:
     """Execute a single tool call and return the result string."""
+    import json
     tool_name = tool_call["function"]["name"]
     tool_args = tool_call["function"]["arguments"]
+
+    # OpenAI-compatible APIs return arguments as a JSON string — parse it.
+    if isinstance(tool_args, str):
+        try:
+            tool_args = json.loads(tool_args)
+        except json.JSONDecodeError as e:
+            logging.error(f"[tool_executor] Tool {tool_name} arguments JSON parse failed: {e}")
+            return f"Argument parse error: {e}"
 
     tool_def = _find_tool(tool_name, tools)
 

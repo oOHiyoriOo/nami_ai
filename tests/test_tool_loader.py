@@ -56,7 +56,6 @@ def test_all_tools_importable():
         print(f"  [FAIL] import errors:\n  " + "\n  ".join(failed))
         return False
     print("  [PASS]")
-    return True
 
 
 def _iter_tools(mod):
@@ -91,7 +90,6 @@ def test_get_tool_returns_dict():
         print(f"  [FAIL]\n  " + "\n  ".join(failed))
         return False
     print("  [PASS]")
-    return True
 
 
 def test_tool_has_required_keys():
@@ -110,7 +108,6 @@ def test_tool_has_required_keys():
         print(f"  [FAIL]\n  " + "\n  ".join(failed))
         return False
     print("  [PASS]")
-    return True
 
 
 def test_function_schema_valid():
@@ -133,7 +130,6 @@ def test_function_schema_valid():
         print(f"  [FAIL]\n  " + "\n  ".join(failed))
         return False
     print("  [PASS]")
-    return True
 
 
 def test_func_is_async_callable():
@@ -157,7 +153,6 @@ def test_func_is_async_callable():
         print(f"  [FAIL]\n  " + "\n  ".join(failed))
         return False
     print("  [PASS]")
-    return True
 
 
 def test_no_name_collisions():
@@ -179,7 +174,6 @@ def test_no_name_collisions():
         print(f"  [FAIL]\n  " + "\n  ".join(collisions))
         return False
     print(f"  [PASS] ({len(seen_names)} tools: {', '.join(sorted(seen_names))})")
-    return True
 
 
 def test_tool_type_is_function():
@@ -197,10 +191,3 @@ def test_tool_type_is_function():
         print(f"  [FAIL]\n  " + "\n  ".join(failed))
         return False
     print("  [PASS]")
-    return True
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

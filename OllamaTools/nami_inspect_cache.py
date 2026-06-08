@@ -8,10 +8,11 @@ the full session.json including test results and changed files.
 import json
 import logging
 
+from lib.utils import resolve_project_root
+
 from lib.services.nami_session_cache import (
     get_session_detail,
     list_sessions,
-    _resolve_project_root,
 )
 
 
@@ -26,7 +27,7 @@ async def nami_inspect_cache(session_id: str = "", list_only: bool = False) -> s
     Returns:
         JSON with session info.
     """
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
 
     if session_id:
         detail = get_session_detail(project_root, session_id)

@@ -12,24 +12,13 @@ import json
 import logging
 from pathlib import Path
 
+from lib.utils import resolve_project_root
+
 _WHITELIST_PATH = Path(__file__).parent / "safe_edit_paths.json"
 _REQUIRED_VERSION = 1
 
 # Cached whitelist data
 _whitelist: dict | None = None
-
-
-def _resolve_project_root() -> Path:
-    """Find the project root containing api_server.py or lib/services."""
-    for anchor in [Path("/workspace/project/nami_ai"), Path.cwd()]:
-        if (anchor / "api_server.py").exists():
-            return anchor
-    current = Path.cwd()
-    for _ in range(5):
-        if (current / "api_server.py").exists():
-            return current
-        current = current.parent
-    return Path.cwd()
 
 
 def _load_whitelist() -> dict:
@@ -108,7 +97,7 @@ def validate_edit_path(file_path: str) -> tuple[bool, str, str | None]:
 
     # Resolve to an absolute path first, then make relative to project root
     abs_path = Path(file_path).resolve()
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
 
     try:
         rel_path = abs_path.relative_to(project_root)

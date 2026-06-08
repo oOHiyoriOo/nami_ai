@@ -8,12 +8,10 @@ Only works within an active nami_begin_session for safety.
 import json
 import logging
 
-from lib.services.nami_session_cache import (
-    apply_cached_file,
-    _cache_root,
-    _resolve_project_root,
-    generate_session_id,
-)
+from lib.utils import resolve_project_root
+
+from lib.services.nami_session_cache import _cache_root, generate_session_id
+from lib.services.nami_session_io import apply_cached_file
 from OllamaTools import require_active_session
 
 
@@ -38,7 +36,7 @@ async def nami_apply_cached_file(
     if err:
         return err
 
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
     cache_root = _cache_root(project_root)
     session_dir = cache_root / session_id
 

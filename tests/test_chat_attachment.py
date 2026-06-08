@@ -307,9 +307,3 @@ def test_message_type_default_for_chatmessage():
     msg = ChatMessage(id="msg-mt", content="test", author=author, channel=channel, timestamp=dt)
     ok = msg.message_type == MessageType.DEFAULT
     assert ok, f"[FAIL] ChatMessage.message_type={msg.message_type!r}"
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

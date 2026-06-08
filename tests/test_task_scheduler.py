@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import aiosqlite
 from lib.services.task_scheduler import (
     TaskScheduler,
+    TaskCreateOptions,
     ScheduledTask,
     _next_run,
     _next_run_from,
@@ -73,12 +74,19 @@ def _init_db(scheduler: TaskScheduler) -> None:
 
 
 def _make_args(**kwargs) -> dict:
+    """Build create_task kwargs, routing optional fields into TaskCreateOptions."""
+    opt_fields = {
+        "adapter", "label", "recurrence", "recurrence_interval",
+        "context_messages", "origin", "ttl_runs",
+    }
+    opts = {k: kwargs.pop(k) for k in list(kwargs) if k in opt_fields}
+
     defaults = dict(
         prompt="check the weather",
         scheduled_at=int(time.time()) + 3600,
         user_id="discord:100",
         conversation_id="chan:200",
-        adapter="discord",
+        options=TaskCreateOptions(adapter="discord", **opts),
     )
     defaults.update(kwargs)
     return defaults
@@ -233,7 +241,6 @@ def test_next_run_patterns():
         print("  [FAIL]\n  " + "\n  ".join(failures))
         return False
     print("  [PASS]")
-    return True
 
 
 def test_next_run_uses_last_fired_at():
@@ -250,7 +257,6 @@ def test_next_run_uses_last_fired_at():
         print(f"  [FAIL] expected {expected}, got {got}")
         return False
     print("  [PASS]")
-    return True
 
 
 def test_next_run_cron():
@@ -277,7 +283,6 @@ def test_next_run_cron():
         print(f"  [FAIL] next run {got} is too far in the future from {base}")
         return False
     print("  [PASS]")
-    return True
 
 
 def test_next_run_from_rebase():
@@ -294,7 +299,6 @@ def test_next_run_from_rebase():
         print(f"  [FAIL] expected {expected}, got {got}")
         return False
     print("  [PASS]")
-    return True
 
 
 def test_missed_notification_text():
@@ -328,7 +332,6 @@ def test_missed_notification_text():
         print("  [FAIL]\n  " + "\n  ".join(failures))
         return False
     print("  [PASS]")
-    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -357,7 +360,6 @@ def test_parse_time():
         print("  [FAIL]\n  " + "\n  ".join(failures))
         return False
     print("  [PASS]")
-    return True
 
 
 def test_parse_time_cron():
@@ -385,7 +387,6 @@ def test_parse_time_cron():
         return False
 
     print("  [PASS]")
-    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -424,7 +425,6 @@ def test_get_tool_returns_four_schemas():
         print("  [FAIL]\n  " + "\n  ".join(failures))
         return False
     print("  [PASS]")
-    return True
 
 
 def test_schedule_task_required_params():
@@ -436,7 +436,6 @@ def test_schedule_task_required_params():
         print(f"  [FAIL] required={required}")
         return False
     print("  [PASS]")
-    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -464,7 +463,6 @@ def test_tool_loader_flattens_list():
         print("  [FAIL]\n  " + "\n  ".join(failures))
         return False
     print("  [PASS]")
-    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -492,7 +490,7 @@ def test_create_task_with_origin_ai():
         task = await scheduler.create_task(
             prompt="ai task", scheduled_at=int(time.time()) + 9999,
             user_id="discord:100", conversation_id="chan:200",
-            adapter="discord", origin="ai", ttl_runs=5, label="ai-test",
+            options=TaskCreateOptions(adapter="discord", origin="ai", ttl_runs=5, label="ai-test"),
         )
         assert task.origin == "ai"
         assert task.ttl_runs == 5
@@ -523,7 +521,7 @@ def test_create_task_max_self_tasks():
                 prompt=f"ai task {i}",
                 scheduled_at=int(time.time()) + 9999 + i,
                 user_id="discord:100", conversation_id="chan:200",
-                adapter="none", origin="ai",
+                options=TaskCreateOptions(adapter="none", origin="ai"),
             )
         # Next one should fail
         try:
@@ -531,7 +529,7 @@ def test_create_task_max_self_tasks():
                 prompt="overflow",
                 scheduled_at=int(time.time()) + 9999,
                 user_id="discord:100", conversation_id="chan:200",
-                adapter="none", origin="ai",
+                options=TaskCreateOptions(adapter="none", origin="ai"),
             )
             assert False, "expected ValueError"
         except ValueError as e:
@@ -554,7 +552,7 @@ def test_origin_user_does_not_count_toward_self_limit():
                 prompt=f"user task {i}",
                 scheduled_at=int(time.time()) + 9999 + i,
                 user_id="discord:100", conversation_id="chan:200",
-                adapter="none", origin="user",
+                options=TaskCreateOptions(adapter="none", origin="user"),
             )
         # Then create MAX_SELF_TASKS AI tasks — should also be fine
         for i in range(MAX_SELF_TASKS):
@@ -562,7 +560,7 @@ def test_origin_user_does_not_count_toward_self_limit():
                 prompt=f"ai task {i}",
                 scheduled_at=int(time.time()) + 9999 + i,
                 user_id="discord:100", conversation_id="chan:200",
-                adapter="none", origin="ai",
+                options=TaskCreateOptions(adapter="none", origin="ai"),
             )
         # Next AI task should fail
         try:
@@ -570,7 +568,7 @@ def test_origin_user_does_not_count_toward_self_limit():
                 prompt="overflow",
                 scheduled_at=int(time.time()) + 9999,
                 user_id="discord:100", conversation_id="chan:200",
-                adapter="none", origin="ai",
+                options=TaskCreateOptions(adapter="none", origin="ai"),
             )
             assert False, "expected ValueError"
         except ValueError:
@@ -640,8 +638,9 @@ def test_ttl_runs_decrements():
         task = await scheduler.create_task(
             prompt="ttl test", scheduled_at=now - 1,  # overdue
             user_id="discord:100", conversation_id="chan:200",
-            adapter="none", recurrence="hourly",
-            origin="ai", ttl_runs=3,
+            options=TaskCreateOptions(
+                adapter="none", recurrence="hourly", origin="ai", ttl_runs=3,
+            ),
         )
 
         # Mark as running (as _fire_overdue would)
@@ -690,8 +689,9 @@ def test_ttl_runs_expires():
         task = await scheduler.create_task(
             prompt="last run", scheduled_at=now - 1,
             user_id="discord:100", conversation_id="chan:200",
-            adapter="none", recurrence="hourly",
-            origin="ai", ttl_runs=1,  # final run
+            options=TaskCreateOptions(
+                adapter="none", recurrence="hourly", origin="ai", ttl_runs=1,
+            ),
         )
 
         await scheduler._set_status(task.id, "running")
@@ -737,8 +737,9 @@ def test_no_ttl_reschedules_normally():
         task = await scheduler.create_task(
             prompt="forever task", scheduled_at=now - 1,
             user_id="discord:100", conversation_id="chan:200",
-            adapter="none", recurrence="hourly",
-            origin="ai", ttl_runs=None,
+            options=TaskCreateOptions(
+                adapter="none", recurrence="hourly", origin="ai", ttl_runs=None,
+            ),
         )
 
         await scheduler._set_status(task.id, "running")
@@ -803,10 +804,10 @@ def test_schedule_self_task_tool_success():
         assert data["data"]["task_id"] == "self-abc-123"
         assert data["data"]["origin"] == "ai"
         assert data["data"]["ttl_runs"] == 5
-        # Verify scheduler was called with origin='ai'
+        # Verify scheduler was called with origin='ai' in options
         call_kwargs = mock_scheduler.create_task.call_args.kwargs
-        assert call_kwargs["origin"] == "ai"
-        assert call_kwargs["ttl_runs"] == 5
+        assert call_kwargs["options"].origin == "ai"
+        assert call_kwargs["options"].ttl_runs == 5
     asyncio.run(run())
     print("  [PASS]")
 
@@ -835,7 +836,7 @@ def test_schedule_self_task_tool_notify_target():
                 notify_target="discord:special_channel",
             )
         call_kwargs = mock_scheduler.create_task.call_args.kwargs
-        assert call_kwargs["adapter"] == "discord"
+        assert call_kwargs["options"].adapter == "discord"
         assert call_kwargs["conversation_id"] == "special_channel"
     asyncio.run(run())
     print("  [PASS]")
@@ -865,7 +866,7 @@ def test_schedule_self_task_zero_ttl():
                 ttl_runs=0,
             )
         call_kwargs = mock_scheduler.create_task.call_args.kwargs
-        assert call_kwargs["ttl_runs"] is None
+        assert call_kwargs["options"].ttl_runs is None
     asyncio.run(run())
     print("  [PASS]")
 
@@ -936,13 +937,14 @@ def test_schedule_task_tool_cron_auto_recurrence():
 
     async def fake_create(**kwargs):
         captured.update(kwargs)
+        opts = kwargs.get("options", TaskCreateOptions())
         from lib.services.task_scheduler import ScheduledTask
         return ScheduledTask(
             id="abc", label=None, prompt=kwargs["prompt"],
             scheduled_at=kwargs["scheduled_at"], created_at=int(time.time()),
             user_id=kwargs["user_id"], conversation_id=kwargs["conversation_id"],
-            adapter=kwargs["adapter"], status="pending",
-            recurrence=kwargs.get("recurrence"),
+            adapter=opts.adapter, status="pending",
+            recurrence=opts.recurrence,
         )
 
     mock_scheduler = MagicMock()
@@ -960,8 +962,9 @@ def test_schedule_task_tool_cron_auto_recurrence():
         data = json.loads(result)
         assert data["success"] is True, f"expected success: {data}"
         # recurrence should be the cron expression
-        assert captured.get("recurrence") == "0 9 * * 1-5", (
-            f"expected recurrence='0 9 * * 1-5', got {captured.get('recurrence')!r}"
+        opts = captured.get("options", TaskCreateOptions())
+        assert opts.recurrence == "0 9 * * 1-5", (
+            f"expected recurrence='0 9 * * 1-5', got {opts.recurrence!r}"
         )
     asyncio.run(run())
     print("  [PASS]")
@@ -1025,8 +1028,3 @@ def test_cancel_task_tool_not_found():
 # ─────────────────────────────────────────────────────────────────────────────
 # Runner
 # ─────────────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

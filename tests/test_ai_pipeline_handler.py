@@ -194,6 +194,74 @@ async def test_on_message_received_sends_error_on_pipeline_failure():
 
 
 # ---------------------------------------------------------------------------
+# _run_pipeline_for_message — includes tool_messages in response.ready
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_run_pipeline_includes_tool_messages_in_response_ready():
+    event_bus = EventBus()
+    handler = AIPipelineHandler(event_bus)
+
+    cfg = _FakeConfig({
+        "providers": {
+            "ollama": {"base_url": "http://localhost:11434", "model": "llama3.2"},
+        },
+        "default_provider": "ollama",
+        "default_model": "llama3.2",
+    })
+
+    mock_ws = MagicMock()
+    mock_ws.get_adapter_tools = MagicMock(return_value=[])
+
+    published_events = []
+    orig_publish = event_bus.publish
+
+    async def _track_publish(event):
+        published_events.append(event)
+        await orig_publish(event)
+
+    event_bus.publish = _track_publish
+
+    # Patch ai_pipeline to return a result with tool_messages
+    import lib.services.ai_pipeline_handler as handler_mod
+    from lib.services.ai_pipeline import AIPipelineResult
+
+    original = handler_mod.ai_pipeline
+    fake = MagicMock()
+    fake.run = AsyncMock(return_value=AIPipelineResult(
+        content="Response with tool output",
+        thinking="Some reasoning",
+        model_used="llama3.2",
+        tool_messages=[
+            {"role": "tool", "content": "[TOOL_RESPONSE:abc-123]", "tool_call_id": "call_1"},
+            {"role": "tool", "content": "[TOOL_RESPONSE:def-456]", "tool_call_id": "call_2"},
+        ],
+    ))
+
+    with _mock_gdata({"cfg": cfg, "adapter_ws_server": mock_ws}):
+        handler_mod.ai_pipeline = fake
+        try:
+            data = {
+                "adapter_name": "discord",
+                "conversation_id": "conv-1",
+                "user_id": "user-1",
+                "content": "Hello",
+                "history": [],
+            }
+            await handler._run_pipeline_for_message(data)
+        finally:
+            handler_mod.ai_pipeline = original
+
+    response_events = [e for e in published_events if e.type == "response.ready"]
+    assert len(response_events) == 1
+    event_data = response_events[0].data
+    assert event_data["tool_messages"] == [
+        {"role": "tool", "content": "[TOOL_RESPONSE:abc-123]", "tool_call_id": "call_1"},
+        {"role": "tool", "content": "[TOOL_RESPONSE:def-456]", "tool_call_id": "call_2"},
+    ]
+
+
+# ---------------------------------------------------------------------------
 # _on_task_due — success path
 # ---------------------------------------------------------------------------
 

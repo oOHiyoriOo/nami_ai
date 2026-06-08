@@ -20,7 +20,6 @@ def test_to_cypher_default_alias():
     assert result.endswith(expected_end), f"Expected end '{expected_end}', got '{result}'"
     assert 'id: "123"' in result
     assert 'name: "Home"' in result
-    return True
 
 
 def test_to_cypher_custom_alias():
@@ -30,7 +29,6 @@ def test_to_cypher_custom_alias():
     assert result.startswith("(x:Location {"), f"Expected '(x:Location {{', got '{result}'"
     assert 'id: "abc"' in result
     assert 'name: "Office"' in result
-    return True
 
 
 def test_to_cypher_skips_none_properties():
@@ -41,7 +39,6 @@ def test_to_cypher_skips_none_properties():
     assert "planeOfExistence" not in result, f"planeOfExistence should be absent: {result}"
     assert 'id: "1"' in result
     assert 'name: "Test"' in result
-    return True
 
 
 def test_to_cypher_includes_plane_of_existence():
@@ -49,7 +46,6 @@ def test_to_cypher_includes_plane_of_existence():
     loc = Location(id="xyz", name="PlaneWalker", planeOfExistence="Astral")
     result = loc.to_cypher()
     assert 'planeOfExistence: "Astral"' in result, f"Expected planeOfExistence in: {result}"
-    return True
 
 
 def test_to_cypher_id_and_name_only():
@@ -58,10 +54,3 @@ def test_to_cypher_id_and_name_only():
     # description and planeOfExistence default to None
     result = loc.to_cypher()
     assert result == '(loc:Location {id: "42", name: "Base"})', f"Unexpected result: {result}"
-    return True
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

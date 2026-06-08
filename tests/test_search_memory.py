@@ -293,9 +293,3 @@ def test_get_tool_func_is_callable():
     tool = get_tool()[0]
     func = tool.get("func")
     assert callable(func), f"[FAIL] 'func' is not callable: {type(func)}"
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

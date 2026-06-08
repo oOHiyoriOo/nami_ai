@@ -318,7 +318,3 @@ def test_validation_discord_with_token():
         ConfigurationFile.load(temp_path)
     finally:
         Path(temp_path).unlink(missing_ok=True)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, '-v'])

@@ -137,13 +137,13 @@ class TestRequireActiveSession:
             marker = Path(tmpdir) / ".nami_change_session"
             assert not marker.exists()
 
-            # Patch _resolve_project_root to point to our temp dir
+            # Patch resolve_project_root to point to our temp dir
             import OllamaTools
             original = getattr(OllamaTools._require_active_session, "__wrapped__", None)
-            session_mod = sys.modules.get("lib.services.session_manager")
-            if session_mod:
-                orig_resolve = session_mod._resolve_project_root
-                session_mod._resolve_project_root = lambda: Path(tmpdir)
+            resolve_mod = sys.modules.get("lib.utils")
+            if resolve_mod:
+                orig_resolve = resolve_mod.resolve_project_root
+                resolve_mod.resolve_project_root = lambda: Path(tmpdir)
 
             try:
                 result = require_active_session()
@@ -152,8 +152,8 @@ class TestRequireActiveSession:
                 assert parsed["success"] is False
                 assert "No active change session" in parsed["error"]
             finally:
-                if session_mod:
-                    session_mod._resolve_project_root = orig_resolve
+                if resolve_mod:
+                    resolve_mod.resolve_project_root = orig_resolve
 
     def test_active_session_returns_none(self):
         """When .nami_change_session exists, returns None (all good)."""
@@ -165,17 +165,17 @@ class TestRequireActiveSession:
                 "description": "test session",
             }))
 
-            session_mod = sys.modules.get("lib.services.session_manager")
-            if session_mod:
-                orig_resolve = session_mod._resolve_project_root
-                session_mod._resolve_project_root = lambda: Path(tmpdir)
+            resolve_mod = sys.modules.get("lib.utils")
+            if resolve_mod:
+                orig_resolve = resolve_mod.resolve_project_root
+                resolve_mod.resolve_project_root = lambda: Path(tmpdir)
 
             try:
                 result = require_active_session()
                 assert result is None, "Should return None when session is active"
             finally:
-                if session_mod:
-                    session_mod._resolve_project_root = orig_resolve
+                if resolve_mod:
+                    resolve_mod.resolve_project_root = orig_resolve
 
     def test_corrupted_marker_returns_error(self):
         """Corrupted marker treated as no session."""
@@ -183,10 +183,10 @@ class TestRequireActiveSession:
             marker = Path(tmpdir) / ".nami_change_session"
             marker.write_text("not valid json")
 
-            session_mod = sys.modules.get("lib.services.session_manager")
-            if session_mod:
-                orig_resolve = session_mod._resolve_project_root
-                session_mod._resolve_project_root = lambda: Path(tmpdir)
+            resolve_mod = sys.modules.get("lib.utils")
+            if resolve_mod:
+                orig_resolve = resolve_mod.resolve_project_root
+                resolve_mod.resolve_project_root = lambda: Path(tmpdir)
 
             try:
                 result = require_active_session()
@@ -194,8 +194,8 @@ class TestRequireActiveSession:
                 parsed = json.loads(result)
                 assert parsed["success"] is False
             finally:
-                if session_mod:
-                    session_mod._resolve_project_root = orig_resolve
+                if resolve_mod:
+                    resolve_mod.resolve_project_root = orig_resolve
 
     def test_require_active_session_returns_dict(self):
         """_require_active_session returns session data dict when active."""
@@ -208,10 +208,10 @@ class TestRequireActiveSession:
             }
             marker.write_text(json.dumps(expected))
 
-            session_mod = sys.modules.get("lib.services.session_manager")
-            if session_mod:
-                orig_resolve = session_mod._resolve_project_root
-                session_mod._resolve_project_root = lambda: Path(tmpdir)
+            resolve_mod = sys.modules.get("lib.utils")
+            if resolve_mod:
+                orig_resolve = resolve_mod.resolve_project_root
+                resolve_mod.resolve_project_root = lambda: Path(tmpdir)
 
             try:
                 data = _require_active_session()
@@ -219,11 +219,5 @@ class TestRequireActiveSession:
                 assert data["safe_point"] == "abc123def"
                 assert data["description"] == "my session"
             finally:
-                if session_mod:
-                    session_mod._resolve_project_root = orig_resolve
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
+                if resolve_mod:
+                    resolve_mod.resolve_project_root = orig_resolve

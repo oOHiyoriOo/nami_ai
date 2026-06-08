@@ -107,7 +107,13 @@ def _matches_categories(tool: dict, allowed: set[str]) -> bool:
 
 def _strip_meta(tools: list[dict]) -> list[dict]:
     """Return provider-safe schemas — no 'func', 'safe', or 'categories' keys."""
-    return [
-        {k: v for k, v in t.items() if k not in ("func", "safe", "categories")}
-        for t in tools
-    ]
+    result = []
+    for t in tools:
+        if not isinstance(t, dict):
+            logging.warning(
+                f"[tool_context] Non-dict item in tools list: "
+                f"{type(t).__name__} = {repr(t)[:100]} — skipping."
+            )
+            continue
+        result.append({k: v for k, v in t.items() if k not in ("func", "safe", "categories")})
+    return result

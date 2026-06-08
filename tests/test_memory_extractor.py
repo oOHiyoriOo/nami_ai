@@ -171,8 +171,3 @@ def test_empty_response_raises_json_decode_error():
 
 
 # --- runner ---
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))

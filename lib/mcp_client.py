@@ -14,6 +14,8 @@ import os
 from typing import Any
 from dataclasses import dataclass, field
 
+from lib.global_registry import g_data
+
 STDERR_BUFFER_MAX = 100  # lines
 
 # Safe environment variables allowed through to MCP server subprocesses.
@@ -437,7 +439,6 @@ class MCPClient:
         """Create an async wrapper function that calls an MCP server tool."""
 
         async def mcp_tool_wrapper(**kwargs):
-            from lib.global_registry import g_data
             from OllamaTools import tool_success, tool_error
 
             try:

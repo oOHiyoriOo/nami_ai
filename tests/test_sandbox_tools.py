@@ -354,9 +354,3 @@ def test_reset_sandbox_get_tool():
     if not callable(tool.get("func")):
         fail.append("func not callable")
     assert not (fail), "Test failed"
-
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))

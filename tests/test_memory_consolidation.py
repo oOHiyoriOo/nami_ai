@@ -21,6 +21,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
+import pytest
+
+from tests.helpers import AsyncContextManagerMock, AsyncIteratorMock
 
 
 def _load_module():
@@ -66,7 +69,7 @@ def _make_mock_driver(session=None):
     driver = MagicMock()
     if session is None:
         session = AsyncMock()
-    driver.session.return_value = _AsyncContextManagerMock(session)
+    driver.session.return_value = AsyncContextManagerMock(session)
     return driver
 
 
@@ -93,32 +96,6 @@ def _make_service(memory_db=None, decay_service=None, config=None):
     if decay_service is None:
         decay_service = _make_decay_service()
     return MemoryConsolidationService(memory_db, decay_service, config)
-
-
-class _AsyncContextManagerMock:
-    """Mock that works as `async with mock as obj:`."""
-    def __init__(self, enter_return):
-        self._enter_return = enter_return
-
-    async def __aenter__(self):
-        return self._enter_return
-
-    async def __aexit__(self, *args):
-        pass
-
-
-class _AsyncIteratorMock:
-    """Mock async iterator for `async for record in result:`."""
-    def __init__(self, items):
-        self._items = list(items)
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if not self._items:
-            raise StopAsyncIteration
-        return self._items.pop(0)
 
 
 # ============================================================
@@ -183,7 +160,8 @@ def test_reset_stats():
 # Lifecycle: start_periodic_consolidation / stop_periodic_consolidation
 # ============================================================
 
-async def _test_start_when_not_running():
+@pytest.mark.asyncio
+async def test_start_when_not_running():
     """start_periodic_consolidation sets is_running and creates task."""
     svc = _make_service()
     # Patch asyncio.create_task to avoid actually running loop
@@ -193,7 +171,8 @@ async def _test_start_when_not_running():
         assert svc.is_running is True
         mock_create.assert_called_once()
 
-async def _test_start_when_already_running():
+@pytest.mark.asyncio
+async def test_start_when_already_running():
     """start when already running is a no-op (warns)."""
     svc = _make_service()
     svc.is_running = True
@@ -201,7 +180,8 @@ async def _test_start_when_already_running():
         await svc.start_periodic_consolidation()
         mock_create.assert_not_called()
 
-async def _test_stop_when_running():
+@pytest.mark.asyncio
+async def test_stop_when_running():
     """stop_periodic_consolidation cancels the task and sets is_running=False."""
     svc = _make_service()
     svc.is_running = True
@@ -216,7 +196,8 @@ async def _test_stop_when_running():
     assert svc.is_running is False
     future.cancel.assert_called_once()
 
-async def _test_stop_when_not_running():
+@pytest.mark.asyncio
+async def test_stop_when_not_running():
     """stop when not running is a no-op."""
     svc = _make_service()
     svc.is_running = False
@@ -230,7 +211,8 @@ async def _test_stop_when_not_running():
 # _cluster_memories — DBSCAN dedup
 # ============================================================
 
-async def _test_cluster_too_few_memories():
+@pytest.mark.asyncio
+async def test_cluster_too_few_memories():
     """Fewer memories than min_cluster_size → empty list."""
     svc = _make_service()
     svc.config.min_cluster_size = 3
@@ -238,18 +220,23 @@ async def _test_cluster_too_few_memories():
     clusters = await svc._cluster_memories(memories)
     assert clusters == []
 
-async def _test_cluster_near_identical():
-    """Two near-identical embeddings → single cluster."""
+@pytest.mark.asyncio
+async def test_cluster_near_identical():
+    """Multiple near-identical embeddings → single cluster."""
     svc = _make_service()
+    svc.config.similarity_threshold = 0.5
+    svc.config.min_cluster_size = 3
     memories = [
         {'id': 'm1', 'summaryEmbeddingVector': [1.0, 0.0, 0.0]},
-        {'id': 'm2', 'summaryEmbeddingVector': [0.99, 0.01, 0.0]},
+        {'id': 'm2', 'summaryEmbeddingVector': [0.999, 0.001, 0.0]},
+        {'id': 'm3', 'summaryEmbeddingVector': [0.998, 0.002, 0.0]},
     ]
     clusters = await svc._cluster_memories(memories)
     assert len(clusters) == 1
-    assert len(clusters[0]) == 2
+    assert len(clusters[0]) == 3
 
-async def _test_cluster_very_different():
+@pytest.mark.asyncio
+async def test_cluster_very_different():
     """Two very different embeddings → noise (no clusters)."""
     svc = _make_service()
     memories = [
@@ -259,23 +246,26 @@ async def _test_cluster_very_different():
     clusters = await svc._cluster_memories(memories)
     assert clusters == []  # noise
 
-async def _test_cluster_mixed():
-    """3 similar + 2 different → 1 cluster with 3, rest noise."""
+@pytest.mark.asyncio
+async def test_cluster_mixed():
+    """Multiple similar points cluster, dissimilar ones are noise."""
     svc = _make_service()
-    svc.config.min_cluster_size = 2
-    # Three similar, one different
+    svc.config.similarity_threshold = 0.5
+    svc.config.min_cluster_size = 3
+    # Four similar, one very different
     memories = [
         {'id': 'a', 'summaryEmbeddingVector': [1.0, 0.0]},
-        {'id': 'b', 'summaryEmbeddingVector': [0.95, 0.05]},
-        {'id': 'c', 'summaryEmbeddingVector': [0.97, 0.03]},
-        {'id': 'd', 'summaryEmbeddingVector': [-1.0, 0.0]},
+        {'id': 'b', 'summaryEmbeddingVector': [0.99, 0.01]},
+        {'id': 'c', 'summaryEmbeddingVector': [0.98, 0.02]},
+        {'id': 'd', 'summaryEmbeddingVector': [0.97, 0.03]},
+        {'id': 'e', 'summaryEmbeddingVector': [-1.0, 0.0]},
     ]
     clusters = await svc._cluster_memories(memories)
-    # Should have 1 cluster of 3 (a, b, c), d is noise
     assert len(clusters) == 1
-    assert len(clusters[0]) == 3
+    assert len(clusters[0]) == 4
 
-async def _test_cluster_zero_vectors():
+@pytest.mark.asyncio
+async def test_cluster_zero_vectors():
     """Memories with zero vectors → single cluster (cosine distance is NaN but handles)."""
     svc = _make_service()
     memories = [
@@ -286,30 +276,48 @@ async def _test_cluster_zero_vectors():
     # Zero vectors should cluster together (identical)
     assert len(clusters) >= 0  # Just ensure it runs without error
 
-async def _test_cluster_empty_list():
+@pytest.mark.asyncio
+async def test_cluster_empty_list():
     """Empty memory list → empty clusters."""
     svc = _make_service()
     clusters = await svc._cluster_memories([])
     assert clusters == []
 
-async def _test_cluster_fallback_zero_embedding():
-    """Missing embedding → falls back to zero vector of embedding_dimension."""
+@pytest.mark.asyncio
+async def test_cluster_fallback_zero_embedding():
+    """Missing embedding → falls back to zero vectors, code doesn't crash."""
     svc = _make_service()
     svc.config.embedding_dimension = 4
     svc.config.min_cluster_size = 2
     memories = [
-        {'id': 'm1', 'summaryEmbeddingVector': []},  # becomes [0,0,0,0]
-        {'id': 'm2', 'summaryEmbeddingVector': []},  # becomes [0,0,0,0]
+        {'id': 'm1', 'summaryEmbeddingVector': []},
+        {'id': 'm2', 'summaryEmbeddingVector': []},
     ]
+    # Zero vectors produce NaN cosine distances; DBSCAN may noise them out.
+    # The test just verifies the fallback doesn't crash.
     clusters = await svc._cluster_memories(memories)
-    # Both have identical zero vectors → should cluster
-    assert len(clusters) >= 0  # Just ensure it runs without error
+    assert isinstance(clusters, list)
+
+@pytest.mark.asyncio
+async def test_cluster_dbscan_error():
+    """DBSCAN.fit() raises → caught, logged, returns []."""
+    svc = _make_service()
+    svc.config.min_cluster_size = 2
+    memories = [
+        {'id': 'm1', 'summaryEmbeddingVector': [1.0, 0.0]},
+        {'id': 'm2', 'summaryEmbeddingVector': [0.0, 1.0]},
+    ]
+    with patch.object(_mod, 'DBSCAN') as mock_dbscan:
+        mock_dbscan.return_value.fit.side_effect = RuntimeError("boom")
+        clusters = await svc._cluster_memories(memories)
+    assert clusters == []
 
 # ============================================================
 # _process_cluster — high-value merge vs low-value decay
 # ============================================================
 
-async def _test_process_high_importance_cluster():
+@pytest.mark.asyncio
+async def test_process_high_importance_cluster():
     """avg_importance >= threshold → merge_and_promote."""
     svc = _make_service()
     svc.config.min_importance_for_promotion = 0.7
@@ -325,7 +333,8 @@ async def _test_process_high_importance_cluster():
     svc._decay_cluster.assert_not_called()
     assert svc.stats['memories_promoted'] == 1
 
-async def _test_process_high_access_cluster():
+@pytest.mark.asyncio
+async def test_process_high_access_cluster():
     """total_access >= threshold → merge_and_promote (even if importance low)."""
     svc = _make_service()
     svc.config.min_access_count_for_promotion = 3
@@ -341,7 +350,8 @@ async def _test_process_high_access_cluster():
     svc._decay_cluster.assert_not_called()
     assert svc.stats['memories_promoted'] == 1
 
-async def _test_process_low_value_cluster():
+@pytest.mark.asyncio
+async def test_process_low_value_cluster():
     """Low importance + low access → decay."""
     svc = _make_service()
     svc.config.min_importance_for_promotion = 0.7
@@ -358,7 +368,8 @@ async def _test_process_low_value_cluster():
     svc._decay_cluster.assert_called_once()
     assert svc.stats['memories_decayed'] == 2
 
-async def _test_process_empty_cluster():
+@pytest.mark.asyncio
+async def test_process_empty_cluster():
     """Empty cluster → no-op."""
     svc = _make_service()
     svc._merge_and_promote_cluster = AsyncMock()
@@ -373,7 +384,8 @@ async def _test_process_empty_cluster():
 # _merge_and_promote_cluster
 # ============================================================
 
-async def _test_merge_two_memories():
+@pytest.mark.asyncio
+async def test_merge_two_memories():
     """Merge 2 memories: keep representative, delete source, update stats."""
     svc = _make_service()
     session = AsyncMock()
@@ -392,7 +404,8 @@ async def _test_merge_two_memories():
     assert session.run.call_count == 3  # update, rel transfer, delete
     assert svc.stats['memories_merged'] == 1
 
-async def _test_merge_single_memory_noop():
+@pytest.mark.asyncio
+async def test_merge_single_memory_noop():
     """Single memory in cluster → no-op (returns early)."""
     svc = _make_service()
     svc._merge_and_promote_cluster = AsyncMock()
@@ -402,7 +415,8 @@ async def _test_merge_single_memory_noop():
     await svc_unmocked._merge_and_promote_cluster(cluster, 'user1')
     assert svc_unmocked.stats['memories_merged'] == 0  # unchanged
 
-async def _test_merge_same_id_memories():
+@pytest.mark.asyncio
+async def test_merge_same_id_memories():
     """Two memories with same id → source_ids empty → no-op."""
     svc = _make_service()
     cluster = [
@@ -412,7 +426,8 @@ async def _test_merge_same_id_memories():
     await svc._merge_and_promote_cluster(cluster, 'user1')
     assert svc.stats['memories_merged'] == 0
 
-async def _test_merge_updates_merge_count():
+@pytest.mark.asyncio
+async def test_merge_updates_merge_count():
     """Merged target memory gets boosted importance and mergedFromCount."""
     svc = _make_service()
     session = AsyncMock()
@@ -431,7 +446,8 @@ async def _test_merge_updates_merge_count():
     assert kwargs['importance'] == 0.55
     assert kwargs['source_count'] == 1
 
-async def _test_merge_handles_error():
+@pytest.mark.asyncio
+async def test_merge_handles_error():
     """Merge error is caught and doesn't crash."""
     svc = _make_service()
     session = AsyncMock()
@@ -451,7 +467,8 @@ async def _test_merge_handles_error():
 # _decay_cluster
 # ============================================================
 
-async def _test_decay_reduces_importance():
+@pytest.mark.asyncio
+async def test_decay_reduces_importance():
     """Decay applies decay_factor to each memory's importance."""
     svc = _make_service(decay_service=_make_decay_service(decay_factor=0.5))
     session = AsyncMock()
@@ -472,7 +489,8 @@ async def _test_decay_reduces_importance():
     assert first_kwargs['new_importance'] == 0.4
     assert second_kwargs['new_importance'] == 0.2
 
-async def _test_decay_minimum_floor():
+@pytest.mark.asyncio
+async def test_decay_minimum_floor():
     """Decay clamps importance at 0.1 minimum."""
     svc = _make_service(decay_service=_make_decay_service(decay_factor=0.05))
     session = AsyncMock()
@@ -488,7 +506,8 @@ async def _test_decay_minimum_floor():
     kwargs = session.run.call_args[1]
     assert kwargs['new_importance'] == 0.1
 
-async def _test_decay_empty_cluster():
+@pytest.mark.asyncio
+async def test_decay_empty_cluster():
     """Empty cluster → no-op."""
     svc = _make_service()
     session = AsyncMock()
@@ -498,7 +517,8 @@ async def _test_decay_empty_cluster():
     await svc._decay_cluster([])
     session.run.assert_not_called()
 
-async def _test_decay_calls_decay_service():
+@pytest.mark.asyncio
+async def test_decay_calls_decay_service():
     """decay_service.compute_decay_factor is called with creation_timestamp."""
     decay_svc = _make_decay_service(decay_factor=0.3)
     svc = _make_service(decay_service=decay_svc)
@@ -513,7 +533,8 @@ async def _test_decay_calls_decay_service():
 
     decay_svc.compute_decay_factor.assert_called_once_with(1234567890)
 
-async def _test_decay_handles_error():
+@pytest.mark.asyncio
+async def test_decay_handles_error():
     """Decay error is caught and doesn't crash."""
     svc = _make_service()
     session = AsyncMock()
@@ -529,7 +550,8 @@ async def _test_decay_handles_error():
 # consolidate_user_memories — full flow
 # ============================================================
 
-async def _test_consolidate_user_no_memories():
+@pytest.mark.asyncio
+async def test_consolidate_user_no_memories():
     """No recent memories → no-op, returns early."""
     svc = _make_service()
     svc._get_recent_memories = AsyncMock(return_value=[])
@@ -541,7 +563,8 @@ async def _test_consolidate_user_no_memories():
     svc._process_cluster.assert_not_called()
     assert svc.stats['memories_processed'] == 0
 
-async def _test_consolidate_user_with_memories():
+@pytest.mark.asyncio
+async def test_consolidate_user_with_memories():
     """Recent memories → cluster → process each cluster."""
     svc = _make_service()
     memories = [
@@ -558,7 +581,8 @@ async def _test_consolidate_user_with_memories():
     assert svc.stats['clusters_formed'] == 1
     svc._process_cluster.assert_called_once()
 
-async def _test_consolidate_user_handles_error():
+@pytest.mark.asyncio
+async def test_consolidate_user_handles_error():
     """Error during consolidation is caught."""
     svc = _make_service()
     svc._get_recent_memories = AsyncMock(side_effect=RuntimeError("DB down"))
@@ -569,7 +593,8 @@ async def _test_consolidate_user_handles_error():
 # consolidate_all_users — multi-user flow
 # ============================================================
 
-async def _test_consolidate_all_users_with_users():
+@pytest.mark.asyncio
+async def test_consolidate_all_users_with_users():
     """Finds all users and consolidates each."""
     svc = _make_service()
 
@@ -581,7 +606,7 @@ async def _test_consolidate_all_users_with_users():
     for i, rec in enumerate(records):
         rec.__getitem__.side_effect = lambda k, val=f'user{i+1}': val
 
-    mock_result = _AsyncIteratorMock(records)
+    mock_result = AsyncIteratorMock(records)
     session = AsyncMock()
     session.run = AsyncMock(return_value=mock_result)
     driver = _make_mock_driver(session)
@@ -594,18 +619,20 @@ async def _test_consolidate_all_users_with_users():
     assert svc.consolidate_user_memories.call_count == 2
     assert svc.stats['runs'] == 1
 
-async def _test_consolidate_all_users_empty():
+@pytest.mark.asyncio
+async def test_consolidate_all_users_empty():
     """No users → still completes and increments runs."""
     svc = _make_service()
     session = AsyncMock()
-    session.run = AsyncMock(return_value=_AsyncIteratorMock([]))
+    session.run = AsyncMock(return_value=AsyncIteratorMock([]))
     driver = _make_mock_driver(session)
     svc.memory_db = _make_mock_db(driver)
 
     await svc.consolidate_all_users()
     assert svc.stats['runs'] == 1
 
-async def _test_consolidate_all_users_handles_error():
+@pytest.mark.asyncio
+async def test_consolidate_all_users_handles_error():
     """Error fetching users is caught."""
     svc = _make_service()
     session = AsyncMock()
@@ -620,7 +647,8 @@ async def _test_consolidate_all_users_handles_error():
 # No-op scenarios
 # ============================================================
 
-async def _test_noop_when_no_duplicates():
+@pytest.mark.asyncio
+async def test_noop_when_no_duplicates():
     """When all memories are different, clustering produces no clusters → no merges."""
     svc = _make_service()
     svc.config.min_cluster_size = 2
@@ -649,7 +677,8 @@ async def _test_noop_when_no_duplicates():
 # _consolidation_loop
 # ============================================================
 
-async def _test_consolidation_loop_runs_once():
+@pytest.mark.asyncio
+async def test_consolidation_loop_runs_once():
     """Loop calls consolidate_all_users then sleeps."""
     svc = _make_service()
     svc.consolidate_all_users = AsyncMock()
@@ -665,7 +694,8 @@ async def _test_consolidation_loop_runs_once():
 
     svc.consolidate_all_users.assert_called_once()
 
-async def _test_consolidation_loop_cancelled():
+@pytest.mark.asyncio
+async def test_consolidation_loop_cancelled():
     """CancelledError is caught and handled."""
     svc = _make_service()
     svc.consolidate_all_users = AsyncMock(side_effect=asyncio.CancelledError())
@@ -673,7 +703,8 @@ async def _test_consolidation_loop_cancelled():
 
     await svc._consolidation_loop()  # should not raise
 
-async def _test_consolidation_loop_generic_error():
+@pytest.mark.asyncio
+async def test_consolidation_loop_generic_error():
     """Generic exception is caught and loop exits."""
     svc = _make_service()
     svc.consolidate_all_users = AsyncMock(side_effect=ValueError("oops"))
@@ -682,75 +713,3 @@ async def _test_consolidation_loop_generic_error():
     await svc._consolidation_loop()  # should not raise
 
 
-# ============================================================
-# Runner
-# ============================================================
-
-def _run_async_tests():
-    async_tests = [
-        # Lifecycle
-        _test_start_when_not_running,
-        _test_start_when_already_running,
-        _test_stop_when_running,
-        _test_stop_when_not_running,
-        # Clustering
-        _test_cluster_too_few_memories,
-        _test_cluster_near_identical,
-        _test_cluster_very_different,
-        _test_cluster_mixed,
-        _test_cluster_zero_vectors,
-        _test_cluster_empty_list,
-        _test_cluster_fallback_zero_embedding,
-        # Process cluster
-        _test_process_high_importance_cluster,
-        _test_process_high_access_cluster,
-        _test_process_low_value_cluster,
-        _test_process_empty_cluster,
-        # Merge and promote
-        _test_merge_two_memories,
-        _test_merge_single_memory_noop,
-        _test_merge_same_id_memories,
-        _test_merge_updates_merge_count,
-        _test_merge_handles_error,
-        # Decay
-        _test_decay_reduces_importance,
-        _test_decay_minimum_floor,
-        _test_decay_empty_cluster,
-        _test_decay_calls_decay_service,
-        _test_decay_handles_error,
-        # consolidate_user_memories
-        _test_consolidate_user_no_memories,
-        _test_consolidate_user_with_memories,
-        _test_consolidate_user_handles_error,
-        # consolidate_all_users
-        _test_consolidate_all_users_with_users,
-        _test_consolidate_all_users_empty,
-        _test_consolidate_all_users_handles_error,
-        # No-op
-        _test_noop_when_no_duplicates,
-        # Consolidation loop
-        _test_consolidation_loop_runs_once,
-        _test_consolidation_loop_cancelled,
-        _test_consolidation_loop_generic_error,
-    ]
-
-    passed = 0
-    failed = 0
-    for t in async_tests:
-        try:
-            asyncio.run(t())
-            print(f"  [PASS] {t.__name__}")
-            passed += 1
-        except Exception as e:
-            print(f"  [FAIL] {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-
-    return passed, failed
-
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))

@@ -20,7 +20,8 @@ from pathlib import Path
 
 from OllamaTools import _require_active_session, require_active_session, tool_error, tool_success
 from lib.global_registry import g_data
-from lib.services.nami_session_cache import cache_edit, _cache_root
+from lib.services.nami_session_cache import _cache_root
+from lib.services.nami_session_io import cache_edit
 from lib.services.safe_edit_validator import validate_edit_path
 
 _PROJECT_ROOT = Path("/workspace/project/nami_ai")

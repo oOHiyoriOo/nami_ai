@@ -8,7 +8,8 @@ only failed sessions for debugging. dry_run previews without deleting.
 import json
 import logging
 
-from lib.services.nami_session_cache import reset_cache, _resolve_project_root
+from lib.utils import resolve_project_root
+from lib.services.nami_session_cleanup import reset_cache
 
 
 async def nami_reset_cache(
@@ -28,7 +29,7 @@ async def nami_reset_cache(
     Returns:
         JSON with deleted/kept counts and session list.
     """
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
 
     result = reset_cache(
         project_root=project_root,

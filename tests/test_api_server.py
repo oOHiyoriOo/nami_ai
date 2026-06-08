@@ -20,7 +20,7 @@ _STUB_MODS = [
     'neo4j', 'neo4j.exceptions', 'neo4j.graph', 'neo4j.time',
     'discord', 'discord.ext', 'discord.ext.commands',
     'sentence_transformers', 'torch', 'asyncpg',
-    'PIL', 'matplotlib', 'scipy', 'numpy', 'pandas',
+    'PIL', 'matplotlib', 'scipy', 'numpy',
     'sklearn', 'sklearn.cluster',
     # Service submodules that pull in heavy transitive deps
     'lib.memory_db',
@@ -58,70 +58,6 @@ def _stub_heavy_modules():
             sys.modules.pop(mod, None)
         else:
             sys.modules[mod] = orig
-
-
-# Check for required dependencies
-try:
-    from lib.utils.model_string import parse_model_string
-    DEPENDENCIES_AVAILABLE = True
-except ImportError as e:
-    DEPENDENCIES_AVAILABLE = False
-    MISSING_DEPENDENCY = str(e)
-
-
-
-
-
-def test_standard_format():
-    """Test standard <provider>/<model> format"""
-    result = parse_model_string("ollama/llama3")
-    assert (result == ("ollama", "llama3")), "Test failed"
-
-
-def test_model_with_version():
-    """Test model name containing a version/tag"""
-    result = parse_model_string("ollama/llama3:latest")
-    assert (result == ("ollama", "llama3:latest")), "Test failed"
-
-
-def test_no_slash():
-    """Test model string without a slash raises ValueError"""
-    try:
-        parse_model_string("llama3")
-    except ValueError as e:
-        pass
-    except Exception as e:
-        pass
-
-
-def test_empty_string():
-    """Test empty string raises ValueError"""
-    try:
-        parse_model_string("")
-    except ValueError as e:
-        pass
-    except Exception as e:
-        pass
-
-
-def test_multiple_slashes():
-    """Test multiple slashes — only split on first slash"""
-    result = parse_model_string("a/b/c")
-    assert (result == ("a", "b/c")), "Test failed"
-
-
-def test_copilot_format():
-    """Test copilot provider format"""
-    result = parse_model_string("copilot/gpt-4.1")
-    assert (result == ("copilot", "gpt-4.1")), "Test failed"
-
-
-def test_openai_format():
-    """Test openai provider format"""
-    result = parse_model_string("openai/gpt-4o-mini")
-    assert (result == ("openai", "gpt-4o-mini")), "Test failed"
-
-
 
 # ---------------------------------------------------------------------------
 # /health endpoint tests
@@ -299,11 +235,8 @@ def test_auth_no_key_configured():
     _make_auth_cfg()  # No api key set
 
     import asyncio
-    try:
-        result = asyncio.run(verify_api_key(credentials=None))
-        assert (result is None), "Test failed"
-    except Exception as e:
-        pass
+    result = asyncio.run(verify_api_key(credentials=None))
+    assert result is None
 
 
 def test_auth_key_configured_no_header():
@@ -314,12 +247,9 @@ def test_auth_key_configured_no_header():
     _make_auth_cfg(api={'api_key': 'secret123'})
 
     import asyncio
-    try:
+    with pytest.raises(HTTPException) as exc_info:
         asyncio.run(verify_api_key(credentials=None))
-    except HTTPException as e:
-        assert (e.status_code == 401), "Test failed"
-    except Exception as e:
-        pass
+    assert exc_info.value.status_code == 401
 
 
 def test_auth_key_configured_wrong_key():
@@ -335,12 +265,9 @@ def test_auth_key_configured_wrong_key():
     )
 
     import asyncio
-    try:
+    with pytest.raises(HTTPException) as exc_info:
         asyncio.run(verify_api_key(credentials=wrong_creds))
-    except HTTPException as e:
-        assert (e.status_code == 403), "Test failed"
-    except Exception as e:
-        pass
+    assert exc_info.value.status_code == 403
 
 
 def test_auth_key_configured_correct_key():
@@ -356,11 +283,8 @@ def test_auth_key_configured_correct_key():
     )
 
     import asyncio
-    try:
-        result = asyncio.run(verify_api_key(credentials=correct_creds))
-        assert (result is None), "Test failed"
-    except Exception as e:
-        pass
+    result = asyncio.run(verify_api_key(credentials=correct_creds))
+    assert result is None
 
 
 def test_auth_empty_api_key_skips():
@@ -371,14 +295,5 @@ def test_auth_empty_api_key_skips():
     _make_auth_cfg(api={'api_key': ''})
 
     import asyncio
-    try:
-        result = asyncio.run(verify_api_key(credentials=None))
-        assert (result is None), "Test failed"
-    except Exception as e:
-        pass
-
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))
+    result = asyncio.run(verify_api_key(credentials=None))
+    assert result is None

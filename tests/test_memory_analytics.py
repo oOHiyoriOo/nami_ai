@@ -23,6 +23,10 @@ import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from tests.helpers import AsyncContextManagerMock
+
 
 def _load_module():
     """Load memory_analytics module directly, bypassing lib.services.__init__ cascade.
@@ -69,19 +73,7 @@ MemoryAnalytics = _ma.MemoryAnalytics
 # Async mock helpers for Neo4j chain
 # ============================================================
 
-class _AsyncContextManagerMock:
-    """Mock that works as `async with mock as obj:`."""
-    def __init__(self, enter_return):
-        self._enter_return = enter_return
-
-    async def __aenter__(self):
-        return self._enter_return
-
-    async def __aexit__(self, *args):
-        pass
-
-
-class _AsyncIteratorMock:
+class AsyncIteratorMock:
     """Mock async iterator for `async for x in result:`."""
     def __init__(self, items):
         self._items = list(items)
@@ -149,12 +141,13 @@ def _make_analytics(memory_db=None, memory_hierarchy=None):
 # get_system_health — empty DB
 # ============================================================
 
-async def _test_get_system_health_empty_db():
+@pytest.mark.asyncio
+async def test_get_system_health_empty_db():
     """Empty DB → status='empty', total=0, all type counts 0."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=0, knowledge=0, procedural=0)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma.get_system_health()
@@ -171,12 +164,13 @@ async def _test_get_system_health_empty_db():
 # get_system_health — populated DB
 # ============================================================
 
-async def _test_get_system_health_populated_db():
+@pytest.mark.asyncio
+async def test_get_system_health_populated_db():
     """Populated DB → status='healthy', correct type counts."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=5, knowledge=3, procedural=2)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma.get_system_health()
@@ -192,12 +186,13 @@ async def _test_get_system_health_populated_db():
 # get_system_health — needs_cleanup when over threshold
 # ============================================================
 
-async def _test_get_system_health_needs_cleanup():
+@pytest.mark.asyncio
+async def test_get_system_health_needs_cleanup():
     """Total > cleanup_threshold (default 10000) → status='needs_cleanup'."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=5000, knowledge=4000, procedural=2000)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma.get_system_health()
@@ -209,7 +204,8 @@ async def _test_get_system_health_needs_cleanup():
 # get_system_health — with hierarchy
 # ============================================================
 
-async def _test_get_system_health_with_hierarchy():
+@pytest.mark.asyncio
+async def test_get_system_health_with_hierarchy():
     """When memory_hierarchy is provided, hierarchy stats are included."""
     mock_hierarchy = MagicMock()
     mock_hierarchy.get_stats = AsyncMock(return_value={"levels": 3, "total": 10})
@@ -217,7 +213,7 @@ async def _test_get_system_health_with_hierarchy():
     ma = _make_analytics(memory_hierarchy=mock_hierarchy)
     session = _mock_db_health_result(episodic=1, knowledge=1, procedural=1)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma.get_system_health()
@@ -229,12 +225,13 @@ async def _test_get_system_health_with_hierarchy():
 # get_system_health — without hierarchy
 # ============================================================
 
-async def _test_get_system_health_without_hierarchy():
+@pytest.mark.asyncio
+async def test_get_system_health_without_hierarchy():
     """When memory_hierarchy is None, 'hierarchy' key is absent."""
     ma = _make_analytics(memory_hierarchy=None)
     session = _mock_db_health_result(episodic=1, knowledge=1, procedural=1)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma.get_system_health()
@@ -245,12 +242,13 @@ async def _test_get_system_health_without_hierarchy():
 # Memory type distribution counting (via _get_database_health)
 # ============================================================
 
-async def _test_type_distribution_all_episodic():
+@pytest.mark.asyncio
+async def test_type_distribution_all_episodic():
     """Only EpisodicMemory entries → counts reflect that."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=42, knowledge=0, procedural=0)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma._get_database_health()
@@ -260,12 +258,14 @@ async def _test_type_distribution_all_episodic():
     assert health['procedural_units'] == 0
 
 
-async def _test_type_distribution_mixed():
+@pytest.mark.asyncio
+
+async def test_type_distribution_mixed():
     """Mixed memory types → counts match individual totals."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=7, knowledge=13, procedural=3)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma._get_database_health()
@@ -279,7 +279,8 @@ async def _test_type_distribution_mixed():
 # User-scoped analytics (user_id parameter)
 # ============================================================
 
-async def _test_user_scoped_database_health():
+@pytest.mark.asyncio
+async def test_user_scoped_database_health():
     """user_id is passed through to Neo4j queries."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -294,7 +295,7 @@ async def _test_user_scoped_database_health():
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma.get_system_health(user_id="user_abc")
@@ -307,7 +308,9 @@ async def _test_user_scoped_database_health():
     assert len(user_id_calls) > 0, "Expected user_id='user_abc' to be passed in queries"
 
 
-async def _test_user_scoped_quality_metrics():
+@pytest.mark.asyncio
+
+async def test_user_scoped_quality_metrics():
     """Quality metrics with user_id filter."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -332,7 +335,7 @@ async def _test_user_scoped_quality_metrics():
     call_count = [0]
 
     def _session_factory():
-        return _AsyncContextManagerMock(session)
+        return AsyncContextManagerMock(session)
 
     async def _run_router(query, *args, **kwargs):
         result = AsyncMock()
@@ -343,7 +346,7 @@ async def _test_user_scoped_quality_metrics():
 
     session.run = AsyncMock(side_effect=_run_router)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     quality = await ma._get_quality_metrics(user_id="user_xyz")
@@ -361,7 +364,8 @@ async def _test_user_scoped_quality_metrics():
 # get_memory_age_distribution
 # ============================================================
 
-async def _test_age_distribution_populated():
+@pytest.mark.asyncio
+async def test_age_distribution_populated():
     """Age distribution returns correct histogram buckets."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -378,7 +382,7 @@ async def _test_age_distribution_populated():
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     dist = await ma.get_memory_age_distribution()
@@ -389,7 +393,9 @@ async def _test_age_distribution_populated():
     assert dist['older'] == 7
 
 
-async def _test_age_distribution_empty():
+@pytest.mark.asyncio
+
+async def test_age_distribution_empty():
     """No records returned → empty dict."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -401,14 +407,16 @@ async def _test_age_distribution_empty():
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     dist = await ma.get_memory_age_distribution()
     assert dist == {}
 
 
-async def _test_age_distribution_user_scoped():
+@pytest.mark.asyncio
+
+async def test_age_distribution_user_scoped():
     """Age distribution with user_id passes the filter."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -425,7 +433,7 @@ async def _test_age_distribution_user_scoped():
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     dist = await ma.get_memory_age_distribution(user_id="user_abc")
@@ -439,7 +447,8 @@ async def _test_age_distribution_user_scoped():
 # get_access_patterns
 # ============================================================
 
-async def _test_access_patterns_populated():
+@pytest.mark.asyncio
+async def test_access_patterns_populated():
     """Access patterns return top accessed memories."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -455,12 +464,12 @@ async def _test_access_patterns_populated():
 
     async def _run(query, params=None):
         result = AsyncMock()
-        result.__aiter__ = MagicMock(return_value=_AsyncIteratorMock(records))
+        result.__aiter__ = MagicMock(return_value=AsyncIteratorMock(records))
         return result
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     patterns = await ma.get_access_patterns(limit=10)
@@ -471,7 +480,9 @@ async def _test_access_patterns_populated():
     assert top[0]['access_count'] == 42
 
 
-async def _test_access_patterns_empty():
+@pytest.mark.asyncio
+
+async def test_access_patterns_empty():
     """Empty DB → empty top list."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -487,7 +498,7 @@ async def _test_access_patterns_empty():
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     patterns = await ma.get_access_patterns()
@@ -498,7 +509,8 @@ async def _test_access_patterns_empty():
 # get_concept_distribution
 # ============================================================
 
-async def _test_concept_distribution_populated():
+@pytest.mark.asyncio
+async def test_concept_distribution_populated():
     """Concepts returned with memory counts, sorted descending."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -511,12 +523,12 @@ async def _test_concept_distribution_populated():
 
     async def _run(query, params=None):
         result = AsyncMock()
-        result.__aiter__ = MagicMock(return_value=_AsyncIteratorMock(concept_records))
+        result.__aiter__ = MagicMock(return_value=AsyncIteratorMock(concept_records))
         return result
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     concepts = await ma.get_concept_distribution(top_k=10)
@@ -526,7 +538,9 @@ async def _test_concept_distribution_populated():
     assert concepts[2]['concept'] == 'Testing'
 
 
-async def _test_concept_distribution_empty():
+@pytest.mark.asyncio
+
+async def test_concept_distribution_empty():
     """No concepts → empty list."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -540,7 +554,7 @@ async def _test_concept_distribution_empty():
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     concepts = await ma.get_concept_distribution()
@@ -551,13 +565,14 @@ async def _test_concept_distribution_empty():
 # Error handling
 # ============================================================
 
-async def _test_database_health_error_returns_error_dict():
+@pytest.mark.asyncio
+async def test_database_health_error_returns_error_dict():
     """DB error → returns dict with error key, zero counts."""
     ma = _make_analytics()
     session = AsyncMock()
     session.run = AsyncMock(side_effect=Exception("Neo4j connection refused"))
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     health = await ma._get_database_health()
@@ -566,26 +581,30 @@ async def _test_database_health_error_returns_error_dict():
     assert health['episodic_memories'] == 0
 
 
-async def _test_quality_metrics_error_returns_error_dict():
+@pytest.mark.asyncio
+
+async def test_quality_metrics_error_returns_error_dict():
     """Quality metrics error → returns dict with error key."""
     ma = _make_analytics()
     session = AsyncMock()
     session.run = AsyncMock(side_effect=Exception("Query timeout"))
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     quality = await ma._get_quality_metrics()
     assert 'error' in quality
 
 
-async def _test_age_distribution_error_returns_error_dict():
+@pytest.mark.asyncio
+
+async def test_age_distribution_error_returns_error_dict():
     """Age distribution error → returns dict with error key."""
     ma = _make_analytics()
     session = AsyncMock()
     session.run = AsyncMock(side_effect=RuntimeError("Boom"))
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     dist = await ma.get_memory_age_distribution()
@@ -596,7 +615,8 @@ async def _test_age_distribution_error_returns_error_dict():
 # _get_quality_metrics — populated
 # ============================================================
 
-async def _test_quality_metrics_populated():
+@pytest.mark.asyncio
+async def test_quality_metrics_populated():
     """Quality metrics with realistic values."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -614,7 +634,7 @@ async def _test_quality_metrics_populated():
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     quality = await ma._get_quality_metrics()
@@ -625,7 +645,9 @@ async def _test_quality_metrics_populated():
     assert quality['low_importance_memories'] == 12
 
 
-async def _test_quality_metrics_no_records():
+@pytest.mark.asyncio
+
+async def test_quality_metrics_no_records():
     """No records returned → all zeros."""
     ma = _make_analytics()
     session = AsyncMock()
@@ -637,7 +659,7 @@ async def _test_quality_metrics_no_records():
 
     session.run = AsyncMock(side_effect=_run)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     quality = await ma._get_quality_metrics()
@@ -670,12 +692,13 @@ def test_cleanup_threshold_custom():
 # diagnose_issues
 # ============================================================
 
-async def _test_diagnose_healthy_system():
+@pytest.mark.asyncio
+async def test_diagnose_healthy_system():
     """Healthy system → no issues, health_score=100, severity='low'."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=5, knowledge=3, procedural=2)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     diag = await ma.diagnose_issues()
@@ -684,12 +707,14 @@ async def _test_diagnose_healthy_system():
     assert len(diag['issues']) <= 0  # may be 0 or more depending on quality metrics
 
 
-async def _test_diagnose_empty_system():
+@pytest.mark.asyncio
+
+async def test_diagnose_empty_system():
     """Empty system → 'No memories stored' issue."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=0, knowledge=0, procedural=0)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     diag = await ma.diagnose_issues()
@@ -698,12 +723,14 @@ async def _test_diagnose_empty_system():
     assert diag['health_score'] >= 0
 
 
-async def _test_diagnose_over_threshold():
+@pytest.mark.asyncio
+
+async def test_diagnose_over_threshold():
     """Total > 10000 → 'High memory count' issue."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=6000, knowledge=4000, procedural=1000)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     diag = await ma.diagnose_issues()
@@ -715,12 +742,13 @@ async def _test_diagnose_over_threshold():
 # generate_report
 # ============================================================
 
-async def _test_generate_report_produces_string():
+@pytest.mark.asyncio
+async def test_generate_report_produces_string():
     """generate_report returns a non-empty string with expected sections."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=3, knowledge=2, procedural=1)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     report = await ma.generate_report()
@@ -732,12 +760,14 @@ async def _test_generate_report_produces_string():
     assert 'Health Score' in report
 
 
-async def _test_generate_report_user_scoped():
+@pytest.mark.asyncio
+
+async def test_generate_report_user_scoped():
     """generate_report with user_id includes user in output."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=1, knowledge=1, procedural=1)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     report = await ma.generate_report(user_id="test_user")
@@ -748,12 +778,13 @@ async def _test_generate_report_user_scoped():
 # export_stats
 # ============================================================
 
-async def _test_export_stats_json():
+@pytest.mark.asyncio
+async def test_export_stats_json():
     """export_stats format='json' produces valid JSON."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=2, knowledge=1, procedural=0)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     stats_json = await ma.export_stats(format='json')
@@ -763,83 +794,17 @@ async def _test_export_stats_json():
     assert 'age_distribution' in stats
 
 
-async def _test_export_stats_text():
+@pytest.mark.asyncio
+
+async def test_export_stats_text():
     """export_stats format='text' produces report string."""
     ma = _make_analytics()
     session = _mock_db_health_result(episodic=1, knowledge=1, procedural=1)
     ma.memory_db.get_driver().session = MagicMock(
-        return_value=_AsyncContextManagerMock(session)
+        return_value=AsyncContextManagerMock(session)
     )
 
     text = await ma.export_stats(format='text')
     assert 'Memory System Report' in text
 
 
-# ============================================================
-# Runner
-# ============================================================
-
-def _run_async_tests():
-    """Run all async tests in the event loop."""
-    async_tests = [
-        # get_system_health
-        _test_get_system_health_empty_db,
-        _test_get_system_health_populated_db,
-        _test_get_system_health_needs_cleanup,
-        _test_get_system_health_with_hierarchy,
-        _test_get_system_health_without_hierarchy,
-        # type distribution
-        _test_type_distribution_all_episodic,
-        _test_type_distribution_mixed,
-        # user-scoped
-        _test_user_scoped_database_health,
-        _test_user_scoped_quality_metrics,
-        # age distribution
-        _test_age_distribution_populated,
-        _test_age_distribution_empty,
-        _test_age_distribution_user_scoped,
-        # access patterns
-        _test_access_patterns_populated,
-        _test_access_patterns_empty,
-        # concept distribution
-        _test_concept_distribution_populated,
-        _test_concept_distribution_empty,
-        # error handling
-        _test_database_health_error_returns_error_dict,
-        _test_quality_metrics_error_returns_error_dict,
-        _test_age_distribution_error_returns_error_dict,
-        # quality metrics
-        _test_quality_metrics_populated,
-        _test_quality_metrics_no_records,
-        # diagnose
-        _test_diagnose_healthy_system,
-        _test_diagnose_empty_system,
-        _test_diagnose_over_threshold,
-        # generate_report
-        _test_generate_report_produces_string,
-        _test_generate_report_user_scoped,
-        # export_stats
-        _test_export_stats_json,
-        _test_export_stats_text,
-    ]
-
-    passed = 0
-    failed = 0
-    for t in async_tests:
-        try:
-            asyncio.run(t())
-            print(f"  [PASS] {t.__name__}")
-            passed += 1
-        except Exception as e:
-            print(f"  [FAIL] {t.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-
-    return passed, failed
-
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))

@@ -9,9 +9,10 @@ import json
 import logging
 from pathlib import Path
 
+from lib.utils import resolve_project_root
+
 from lib.services.nami_session_cache import _cache_root, finalize_cache
 from lib.services.session_manager import (
-    _resolve_project_root,
     delete_session_marker,
     read_session_marker,
     rollback_to_safe_point,
@@ -28,7 +29,7 @@ async def abort_session() -> str:
     Returns:
         JSON confirmation.
     """
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
 
     existing = read_session_marker(project_root)
     if existing is None:

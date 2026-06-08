@@ -36,7 +36,6 @@ def test_make_placeholder():
         print(f"  [FAIL] placeholder={ph!r}")
         return False
     print("  [PASS]")
-    return True
 
 
 def test_parse_placeholder():
@@ -65,7 +64,6 @@ def test_parse_placeholder():
         return False
 
     print("  [PASS]")
-    return True
 
 
 async def _store_and_get(db_path: str):
@@ -108,7 +106,6 @@ def test_store_and_get():
     finally:
         os.unlink(db_path)
     print("  [PASS]")
-    return True
 
 
 def test_delete():
@@ -138,7 +135,6 @@ def test_delete():
     finally:
         os.unlink(db_path)
     print("  [PASS]")
-    return True
 
 
 def test_get_count():
@@ -160,7 +156,6 @@ def test_get_count():
     finally:
         os.unlink(db_path)
     print("  [PASS]")
-    return True
 
 
 def test_multiple_stores():
@@ -191,7 +186,6 @@ def test_multiple_stores():
     finally:
         os.unlink(db_path)
     print("  [PASS]")
-    return True
 
 
 def test_prune_old():
@@ -239,7 +233,6 @@ def test_prune_old():
     finally:
         os.unlink(db_path)
     print("  [PASS]")
-    return True
 
 
 def test_placeholder_roundtrip():
@@ -263,7 +256,6 @@ def test_placeholder_roundtrip():
     finally:
         os.unlink(db_path)
     print("  [PASS]")
-    return True
 
 
 def test_large_response():
@@ -286,10 +278,3 @@ def test_large_response():
     finally:
         os.unlink(db_path)
     print("  [PASS]")
-    return True
-
-
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))

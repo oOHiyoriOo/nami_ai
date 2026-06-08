@@ -232,7 +232,3 @@ def test_pipeline_run_thinking_override():
     assert result.model_used == "llama3.2-think", (
         f"model_used={result.model_used!r} (expected 'llama3.2-think')"
     )
-
-
-if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v"]))

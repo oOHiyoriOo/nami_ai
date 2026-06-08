@@ -20,7 +20,7 @@ import dateparser
 
 from lib.global_registry import g_data
 from lib.services.ai_pipeline import pipeline_ctx
-from lib.services.task_scheduler import _is_cron
+from lib.services.task_scheduler import TaskCreateOptions, _is_cron
 from OllamaTools import tool_error, tool_success
 
 # ── Recurrence aliases the AI can pass ───────────────────────────────────────
@@ -164,13 +164,15 @@ async def _create_task_common(
             scheduled_at=scheduled_at,
             user_id=user_id,
             conversation_id=conversation_id,
-            adapter=adapter,
-            label=label or None,
-            recurrence=rec,
-            recurrence_interval=rec_interval,
-            context_messages=max(1, context_messages),
-            origin=origin,
-            ttl_runs=ttl_runs,
+            options=TaskCreateOptions(
+                adapter=adapter,
+                label=label or None,
+                recurrence=rec,
+                recurrence_interval=rec_interval,
+                context_messages=max(1, context_messages),
+                origin=origin,
+                ttl_runs=ttl_runs,
+            ),
         )
 
         import datetime

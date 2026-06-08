@@ -155,7 +155,3 @@ def test_arguments_key_alternative():
     assert len(tool_calls) == 1
     assert tool_calls[0]["function"]["name"] == "my_tool"
     assert tool_calls[0]["function"]["arguments"] == {"key": "from_arguments"}
-
-
-if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-v"]))

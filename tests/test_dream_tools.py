@@ -29,6 +29,8 @@ from OllamaTools.dream_tools import (
     dream_delete_memory,
     dream_merge_memories,
     dream_get_stats,
+    dream_find_important_memories,
+    dream_replay_memory,
     get_tool,
 )
 
@@ -91,10 +93,10 @@ def test_get_tool_returns_list():
     assert isinstance(tools, list), f"[FAIL] Expected list, got {type(tools)}"
 
 
-def test_get_tool_has_seven_schemas():
-    """get_tool() returns 7 tool definitions."""
+def test_get_tool_has_nine_schemas():
+    """get_tool() returns 9 tool definitions."""
     tools = get_tool()
-    assert len(tools) == 7, f"[FAIL] Expected 7 tools, got {len(tools)}"
+    assert len(tools) == 9, f"[FAIL] Expected 9 tools, got {len(tools)}"
 
 
 def test_get_tool_names_are_correct():
@@ -108,6 +110,8 @@ def test_get_tool_names_are_correct():
         "dream_update_memory",
         "dream_delete_memory",
         "dream_merge_memories",
+        "dream_find_important_memories",
+        "dream_replay_memory",
     }
     actual = {t["function"]["name"] for t in tools}
     assert actual == expected, f"[FAIL] Expected names {expected}, got {actual}"
@@ -136,8 +140,8 @@ def test_get_tool_safe_flags_are_correct():
     """Read tools are safe=True, write tools are safe=False."""
     tools = get_tool()
     safe_values = {t["function"]["name"]: t.get("safe") for t in tools}
-    read_tools = ["dream_get_stats", "dream_list_memories", "dream_search_memories", "dream_get_memory"]
-    write_tools = ["dream_update_memory", "dream_delete_memory", "dream_merge_memories"]
+    read_tools = ["dream_get_stats", "dream_list_memories", "dream_search_memories", "dream_get_memory", "dream_find_important_memories"]
+    write_tools = ["dream_update_memory", "dream_delete_memory", "dream_merge_memories", "dream_replay_memory"]
     for name in read_tools:
         assert safe_values.get(name) is True, f"[FAIL] '{name}' expected safe=True, got {safe_values.get(name)}"
     for name in write_tools:
@@ -148,8 +152,8 @@ def test_get_tool_categories_are_correct():
     """Read tools are memory_read, write tools are memory_write."""
     tools = get_tool()
     cat_values = {t["function"]["name"]: t.get("categories", []) for t in tools}
-    read_tools = ["dream_get_stats", "dream_list_memories", "dream_search_memories", "dream_get_memory"]
-    write_tools = ["dream_update_memory", "dream_delete_memory", "dream_merge_memories"]
+    read_tools = ["dream_get_stats", "dream_list_memories", "dream_search_memories", "dream_get_memory", "dream_find_important_memories"]
+    write_tools = ["dream_update_memory", "dream_delete_memory", "dream_merge_memories", "dream_replay_memory"]
     for name in read_tools:
         assert "memory_read" in cat_values.get(name, []), f"[FAIL] '{name}' expected memory_read, got {cat_values.get(name)}"
     for name in write_tools:
@@ -626,9 +630,177 @@ def test_dream_get_stats_handles_exception():
         assert "Error" in result, f"[FAIL] Expected error string, got: {result!r}"
 
 
-# ── Runner ───────────────────────────────────────────────────────────
+# ── dream_find_important_memories tests ───────────────────────────────
 
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
+def test_dream_find_important_memories_db_not_available():
+    """dream_find_important_memories returns error when memory_db is None."""
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = None
+        result = asyncio.run(dream_find_important_memories())
+        assert "Error" in result or "not available" in result, f"[FAIL] Expected error for missing db, got: {result!r}"
+
+
+def test_dream_find_important_memories_returns_scored_list():
+    """dream_find_important_memories returns JSON list sorted by cross_ref_score desc."""
+    def _make_record(mem_id, content, cross_ref_score, importance, concept_count):
+        record = MagicMock()
+        record.__getitem__.side_effect = lambda key, _vals={
+            "memory_id": mem_id, "memory_type": "EpisodicMemory",
+            "content": content, "cross_ref_score": cross_ref_score,
+            "importance": importance, "concept_count": concept_count,
+        }: _vals[key]
+        return record
+
+    records = [
+        _make_record("mem-aaa", "Important fact A", 3.5, 0.9, 3),
+        _make_record("mem-bbb", "Important fact B", 2.0, 0.8, 2),
+        _make_record("mem-ccc", "Low score C", 0.5, 0.5, 0),
+    ]
+    rec_iter = MagicMock()
+    rec_iter.__aiter__.return_value = records
+
+    session = _make_mock_session(rec_iter)
+    driver = _make_mock_driver(session)
+
+    db = _make_mock_db()
+    db.MEMORY_TYPES = {"EpisodicMemory": (MagicMock(), "summary")}
+    db.get_driver.return_value = driver
+
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = db
+        result = asyncio.run(dream_find_important_memories(limit=5))
+        parsed = json.loads(result)
+        assert len(parsed) == 3, f"[FAIL] Expected 3 results, got {len(parsed)}"
+        assert parsed[0]["memory_id"] == "mem-aaa"
+        assert parsed[0]["cross_ref_score"] == 3.5
+        assert parsed[2]["memory_id"] == "mem-ccc"
+        assert parsed[2]["cross_ref_score"] == 0.5
+
+
+def test_dream_find_important_memories_handles_exception():
+    """dream_find_important_memories catches exceptions gracefully."""
+    db = _make_mock_db()
+    db.get_driver.side_effect = RuntimeError("DB down")
+
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = db
+        result = asyncio.run(dream_find_important_memories())
+        assert "Error" in result, f"[FAIL] Expected error string, got: {result!r}"
+
+
+# ── dream_replay_memory tests ─────────────────────────────────────────
+
+def test_dream_replay_memory_db_not_available():
+    """dream_replay_memory returns error when memory_db is None."""
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = None
+        result = asyncio.run(dream_replay_memory("mem-1", "EpisodicMemory"))
+        assert "Error" in result or "not available" in result, f"[FAIL] Expected error for missing db, got: {result!r}"
+
+
+def test_dream_replay_memory_invalid_type():
+    """dream_replay_memory returns error for invalid memory_type."""
+    db = _make_mock_db()
+
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = db
+        result = asyncio.run(dream_replay_memory("mem-1", "InvalidType"))
+        assert "Error" in result, f"[FAIL] Expected error for invalid type, got: {result!r}"
+
+
+def test_dream_replay_memory_not_found():
+    """dream_replay_memory returns not-found message for missing ID."""
+    fetch_res = MagicMock()
+    fetch_res.single = AsyncMock(return_value=None)
+
+    session = _make_mock_session(fetch_res)
+    driver = _make_mock_driver(session)
+
+    db = _make_mock_db()
+    db.get_driver.return_value = driver
+
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = db
+        result = asyncio.run(dream_replay_memory("missing-id", "EpisodicMemory"))
+        assert "No " in result or "not found" in result.lower(), f"[FAIL] Expected not-found message, got: {result!r}"
+
+
+def test_dream_replay_memory_replays_and_boosts():
+    """dream_replay_memory re-encodes embedding and boosts importance."""
+    fetch_res = MagicMock()
+    fetch_res.single = AsyncMock(return_value={
+        "content": "Core knowledge about AI",
+        "importance": 0.7,
+    })
+
+    update_res = MagicMock()
+    update_res.single = AsyncMock(return_value={"updated_id": "mem-1"})
+
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.run = AsyncMock(side_effect=[fetch_res, update_res])
+
+    driver = _make_mock_driver(session)
+
+    db = _make_mock_db()
+    db.get_driver.return_value = driver
+
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = db
+        result = asyncio.run(dream_replay_memory("mem-1", "EpisodicMemory"))
+
+    assert "Replayed" in result, f"[FAIL] Expected 'Replayed' in result, got: {result!r}"
+    assert "0.700" in result, f"[FAIL] Expected old importance 0.700, got: {result!r}"
+    assert "0.805" in result, f"[FAIL] Expected new importance ~0.805 (0.7×1.15), got: {result!r}"
+    db._encode.assert_called_once_with("Core knowledge about AI")
+
+
+def test_dream_replay_memory_no_content():
+    """dream_replay_memory returns error when content is empty/None."""
+    fetch_res = MagicMock()
+    fetch_res.single = AsyncMock(return_value={
+        "content": None, "importance": 0.5,
+    })
+
+    session = _make_mock_session(fetch_res)
+    driver = _make_mock_driver(session)
+
+    db = _make_mock_db()
+    db.get_driver.return_value = driver
+
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = db
+        result = asyncio.run(dream_replay_memory("mem-1", "EpisodicMemory"))
+        assert "no content" in result.lower(), f"[FAIL] Expected no-content message, got: {result!r}"
+
+
+def test_dream_replay_memory_importance_capped_at_one():
+    """dream_replay_memory caps importance at 1.0."""
+    fetch_res = MagicMock()
+    fetch_res.single = AsyncMock(return_value={
+        "content": "Very important memory",
+        "importance": 0.95,
+    })
+
+    update_res = MagicMock()
+    update_res.single = AsyncMock(return_value={"updated_id": "mem-1"})
+
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.run = AsyncMock(side_effect=[fetch_res, update_res])
+
+    driver = _make_mock_driver(session)
+
+    db = _make_mock_db()
+    db.get_driver.return_value = driver
+
+    with patch("OllamaTools.dream_tools.g_data") as mock_g:
+        mock_g.get.return_value = db
+        result = asyncio.run(dream_replay_memory("mem-1", "EpisodicMemory"))
+
+    assert "1.000" in result, f"[FAIL] Expected importance capped at 1.000, got: {result!r}"
+
+
+# ── Runner ───────────────────────────────────────────────────────────

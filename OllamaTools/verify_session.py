@@ -18,8 +18,9 @@ from lib.services.nami_session_cache import (
     finalize_cache,
     read_session_json,
 )
+from lib.utils import resolve_project_root
+
 from lib.services.session_manager import (
-    _resolve_project_root,
     delete_session_marker,
     move_safe_point_to_head,
     read_session_marker,
@@ -88,7 +89,7 @@ async def verify_session() -> str:
 
     No active session → error.
     """
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
 
     existing = read_session_marker(project_root)
     if existing is None:

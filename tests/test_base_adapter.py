@@ -203,8 +203,3 @@ def test_get_adapter_name():
     adapter = _TestAdapter({})
     name = adapter.get_adapter_name()
     assert name == "_test", f"Expected '_test', got '{name}'"
-
-
-if __name__ == "__main__":
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))
