@@ -5,6 +5,8 @@ import logging
 import asyncio
 import re
 from typing import Any
+
+import httpx
 from ollama import Client as OllamaClient
 
 from .base_provider import AIProvider, Message, ChatResponse
@@ -23,7 +25,16 @@ class OllamaProvider(AIProvider):
         super().__init__(config)
         self.url = config.get('url', 'http://localhost:11434')
         self.default_model = config.get('model')  # None if not set; callers always pass model explicitly
-        self.client = OllamaClient(host=self.url)
+
+        request_timeout = config.get('request_timeout', 600)
+        connect_timeout = config.get('connect_timeout', 30)
+        timeout = httpx.Timeout(
+            connect=connect_timeout,
+            read=request_timeout if request_timeout > 0 else None,
+            write=request_timeout if request_timeout > 0 else None,
+            pool=request_timeout if request_timeout > 0 else None,
+        )
+        self.client = OllamaClient(host=self.url, timeout=timeout)
         # Per-model capability cache — populated lazily on first use
         self._model_capabilities: dict[str, set[str]] = {}
         # Only query capabilities if a default model is configured; otherwise defer to first ensure_capabilities() call
@@ -82,26 +93,46 @@ class OllamaProvider(AIProvider):
 
         # Call Ollama API
         try:
-            # Build API call kwargs
-            api_kwargs = {
+            # Build request payload.
+            # We use the httpx client directly instead of self.client.chat()
+            # because the ollama Python library's ChatRequest model does not
+            # expose n_keep — a llama.cpp parameter that tells the server how
+            # many tokens from the beginning of the prompt to always preserve.
+            # Without n_keep, the system prompt (personality + memories) gets
+            # silently truncated when the context window overflows (#302).
+            request_body: dict[str, Any] = {
                 'model': model,
                 'messages': ollama_messages,
-                'stream': False
+                'stream': False,
             }
             if tools:
-                api_kwargs['tools'] = tools
+                request_body['tools'] = tools
             if options:
-                api_kwargs['options'] = options
+                request_body['options'] = options
             if think is not None:
-                api_kwargs['think'] = think
+                request_body['think'] = think
             if format_schema is not None:
-                # Ollama supports 'format' parameter for structured output
-                api_kwargs['format'] = format_schema
-            
-            response = await asyncio.to_thread(
-                self.client.chat,
-                **api_kwargs
+                request_body['format'] = format_schema
+
+            # Estimate system prompt token count and set n_keep so the
+            # llama.cpp server preserves it during context truncation.
+            system_chars = sum(
+                len(m.get('content', ''))
+                for m in ollama_messages
+                if m.get('role') == 'system'
             )
+            n_keep = max((system_chars // 4) + 64, 64)  # rough token estimate + safety buffer
+            request_body['n_keep'] = n_keep
+
+            self._dump_request({"model": model, "messages": ollama_messages, **{k: v for k, v in request_body.items() if k not in ("model", "messages")}})
+            response_raw = await asyncio.to_thread(
+                lambda: self.client._client.post(
+                    self.url.rstrip('/') + '/api/chat',
+                    json=request_body,
+                )
+            )
+            response_raw.raise_for_status()
+            response = response_raw.json()
 
             # Extract tool calls if present (handles XML-formatted tool calls)
             # If extraction fails, return error as content so AI can retry

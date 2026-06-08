@@ -65,27 +65,36 @@ class MessageStateCache:
     def __init__(self, db_path: str = "scheduler.db", ttl_hours: float = _TTL_HOURS) -> None:
         self._db_path = db_path
         self._ttl_hours = ttl_hours
+        self._conn: aiosqlite.Connection | None = None
         self._cleanup_task: asyncio.Task | None = None
 
     async def init(self) -> None:
         """Create the ``message_state`` table if it does not already exist."""
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(_CREATE_TABLE)
-            await db.commit()
+        self._conn = await aiosqlite.connect(self._db_path)
+        await self._conn.execute(_CREATE_TABLE)
+        await self._conn.commit()
         logger.info("[msg_state_cache] initialised (db=%s)", self._db_path)
+
+    async def _ensure_conn(self) -> aiosqlite.Connection:
+        """Return the persistent connection, opening it lazily if needed."""
+        if self._conn is None:
+            self._conn = await aiosqlite.connect(self._db_path)
+        return self._conn
 
     def start(self) -> None:
         """Start the background TTL cleanup task."""
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
     async def stop(self) -> None:
-        """Cancel the background cleanup task."""
+        """Cancel the background cleanup task and close the DB connection."""
         if self._cleanup_task:
             self._cleanup_task.cancel()
             try:
                 await self._cleanup_task
             except asyncio.CancelledError:
                 pass
+        if self._conn:
+            await self._conn.close()
 
     # ------------------------------------------------------------------
     # Write operations
@@ -102,24 +111,24 @@ class MessageStateCache:
         """
         now = _now()
         # Queued entries get a longer TTL so they survive until processed
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                """
-                INSERT OR REPLACE INTO message_state
-                    (conversation_id, state, adapter, event_json,
-                     response, queued_at, updated_at, expires_at)
-                VALUES (?, 'queued', ?, ?, NULL, ?, ?, ?)
-                """,
-                (
-                    conversation_id,
-                    adapter,
-                    json.dumps(event),
-                    now,
-                    now,
-                    _expiry(self._ttl_hours * 24),  # keep queued entries 24× longer
-                ),
-            )
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO message_state
+                (conversation_id, state, adapter, event_json,
+                 response, queued_at, updated_at, expires_at)
+            VALUES (?, 'queued', ?, ?, NULL, ?, ?, ?)
+            """,
+            (
+                conversation_id,
+                adapter,
+                json.dumps(event),
+                now,
+                now,
+                _expiry(self._ttl_hours * 24),  # keep queued entries 24× longer
+            ),
+        )
+        await db.commit()
 
     async def set_processing(self, conversation_id: str) -> None:
         """Transition a queued entry to ``processing`` state.
@@ -137,16 +146,16 @@ class MessageStateCache:
             response:        AI response text (may be ``"<ignore>"``).
         """
         now = _now()
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                """
-                UPDATE message_state
-                SET state='done', response=?, updated_at=?, expires_at=?
-                WHERE conversation_id=?
-                """,
-                (response, now, _expiry(self._ttl_hours), conversation_id),
-            )
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute(
+            """
+            UPDATE message_state
+            SET state='done', response=?, updated_at=?, expires_at=?
+            WHERE conversation_id=?
+            """,
+            (response, now, _expiry(self._ttl_hours), conversation_id),
+        )
+        await db.commit()
 
     async def set_error(self, conversation_id: str) -> None:
         """Mark an entry as errored.
@@ -168,13 +177,16 @@ class MessageStateCache:
             Dict with keys ``state``, ``adapter``, ``event``, ``response``,
             ``queued_at``, ``updated_at`` — or ``None`` if not found.
         """
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        db = await self._ensure_conn()
+        db.row_factory = aiosqlite.Row
+        try:
             async with db.execute(
                 "SELECT * FROM message_state WHERE conversation_id=?",
                 (conversation_id,),
             ) as cursor:
                 row = await cursor.fetchone()
+        finally:
+            db.row_factory = None
         if not row:
             return None
         return {
@@ -205,12 +217,15 @@ class MessageStateCache:
         """
         from lib.services.event_bus import Event as _Event
 
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        db = await self._ensure_conn()
+        db.row_factory = aiosqlite.Row
+        try:
             async with db.execute(
                 "SELECT * FROM message_state WHERE state IN ('queued', 'processing')"
             ) as cursor:
                 rows = await cursor.fetchall()
+        finally:
+            db.row_factory = None
 
         count = 0
         for row in rows:
@@ -244,38 +259,38 @@ class MessageStateCache:
         self, conversation_id: str, state: str, expiry: str | None = None
     ) -> None:
         now = _now()
-        async with aiosqlite.connect(self._db_path) as db:
-            if expiry:
-                await db.execute(
-                    """
-                    UPDATE message_state
-                    SET state=?, updated_at=?, expires_at=?
-                    WHERE conversation_id=?
-                    """,
-                    (state, now, expiry, conversation_id),
-                )
-            else:
-                await db.execute(
-                    "UPDATE message_state SET state=?, updated_at=? WHERE conversation_id=?",
-                    (state, now, conversation_id),
-                )
-            await db.commit()
+        db = await self._ensure_conn()
+        if expiry:
+            await db.execute(
+                """
+                UPDATE message_state
+                SET state=?, updated_at=?, expires_at=?
+                WHERE conversation_id=?
+                """,
+                (state, now, expiry, conversation_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE message_state SET state=?, updated_at=? WHERE conversation_id=?",
+                (state, now, conversation_id),
+            )
+        await db.commit()
 
     async def _cleanup_loop(self) -> None:
         """Background task: delete entries past their ``expires_at`` every 10 min."""
         while True:
             try:
                 await asyncio.sleep(600)
-                async with aiosqlite.connect(self._db_path) as db:
-                    cursor = await db.execute(
-                        "DELETE FROM message_state WHERE expires_at < ?", (_now(),)
+                db = await self._ensure_conn()
+                cursor = await db.execute(
+                    "DELETE FROM message_state WHERE expires_at < ?", (_now(),)
+                )
+                await db.commit()
+                if cursor.rowcount:
+                    logger.debug(
+                        "[msg_state_cache] pruned %d expired entries",
+                        cursor.rowcount,
                     )
-                    await db.commit()
-                    if cursor.rowcount:
-                        logger.debug(
-                            "[msg_state_cache] pruned %d expired entries",
-                            cursor.rowcount,
-                        )
             except asyncio.CancelledError:
                 break
             except Exception:

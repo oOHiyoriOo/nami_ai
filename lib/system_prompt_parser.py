@@ -2,6 +2,8 @@ import re
 import pytz
 from datetime import datetime
 
+from lib.global_registry import g_data
+
 class NamiSystemPrompt:
     """
     Loads and parses Markdown-based system prompts with template variable resolution.
@@ -96,3 +98,18 @@ class NamiSystemPrompt:
             Current date as a string (e.g. ``"08-05-2026"``).
         """
         return datetime.now(self.tz).strftime('%d-%m-%Y')
+
+    async def owner(self):
+        """
+        Return the configured owner/primary user name.
+
+        Used as the ``{{owner}}`` template resolver. Reads from
+        ``bot.owner`` in config (default: ``"the user"`` if not set).
+
+        Returns:
+            Owner name string (e.g. ``"Zero"``).
+        """
+        cfg = g_data.get("cfg")
+        if cfg:
+            return cfg.data.get("bot", {}).get("owner", "the user")
+        return "the user"

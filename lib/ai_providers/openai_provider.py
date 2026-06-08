@@ -4,6 +4,8 @@ OpenAI AI provider implementation.
 import logging
 from typing import Any
 
+import httpx
+
 from .base_provider import AIProvider, Message, ChatResponse
 
 
@@ -26,7 +28,9 @@ class OpenAIProvider(AIProvider):
         Initialize OpenAI provider.
 
         Args:
-            config: Configuration dict with 'api_key' and 'model' keys
+            config: Configuration dict with 'api_key' and 'model' keys.
+                - request_timeout: seconds for read/write before giving up (0 = no limit, default: 600)
+                - connect_timeout: seconds to establish TCP connection (default: 30)
         """
         super().__init__(config)
         self.capabilities = {"completion", "tools", "vision", "structured_output"}
@@ -37,13 +41,23 @@ class OpenAIProvider(AIProvider):
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
 
+        request_timeout = config.get('request_timeout', 600)
+        connect_timeout = config.get('connect_timeout', 30)
+        timeout = httpx.Timeout(
+            connect=connect_timeout,
+            read=request_timeout if request_timeout > 0 else None,
+            write=request_timeout if request_timeout > 0 else None,
+            pool=request_timeout if request_timeout > 0 else None,
+        )
+
         try:
             from openai import AsyncOpenAI
             self.client = AsyncOpenAI(
                 api_key=self.api_key,
-                organization=self.organization
+                organization=self.organization,
+                timeout=timeout,
             )
-            logging.info(f"Initialized OpenAI provider with model: {self.default_model}")
+            logging.info(f"Initialized OpenAI provider with model: {self.default_model} (connect={connect_timeout}s, read={request_timeout or '∞'}s)")
         except ImportError:
             raise ImportError("openai package not installed. Install with: pip install openai")
 

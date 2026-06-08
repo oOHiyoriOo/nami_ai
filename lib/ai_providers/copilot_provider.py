@@ -9,6 +9,8 @@ Repository: https://github.com/ericc-ch/copilot-api
 import logging
 from typing import Any
 
+import httpx
+
 from .base_provider import AIProvider, Message, ChatResponse
 
 
@@ -42,6 +44,9 @@ class CopilotProvider(AIProvider):
                 - url: copilot-api server URL (default: http://localhost:4141)
                 - model: model name (default: gpt-4.1)
                 - api_key: API key (default: dummy)
+                - request_timeout: seconds for read/write before giving up (0 = no limit, default: 600)
+                - connect_timeout: seconds to establish TCP connection (default: 30)
+                - max_openai_retries: openai SDK internal retry count (default: 0; use retry_max_attempts in bot config instead)
         """
         super().__init__(config)
         self.capabilities = {"completion", "tools", "structured_output"}
@@ -49,14 +54,26 @@ class CopilotProvider(AIProvider):
         self.default_model = config.get('model', 'gpt-4.1')
         self.api_key = config.get('api_key', 'dummy')
 
+        request_timeout = config.get('request_timeout', 600)
+        connect_timeout = config.get('connect_timeout', 30)
+        max_retries = config.get('max_openai_retries', 0)
+        timeout = httpx.Timeout(
+            connect=connect_timeout,
+            read=request_timeout if request_timeout > 0 else None,
+            write=request_timeout if request_timeout > 0 else None,
+            pool=request_timeout if request_timeout > 0 else None,
+        )
+
         try:
             from openai import AsyncOpenAI
             self.client = AsyncOpenAI(
                 base_url=f"{self.base_url}/v1",
-                api_key=self.api_key
+                api_key=self.api_key,
+                timeout=timeout,
+                max_retries=max_retries,
             )
             logging.info(f"Initialized Copilot provider with model: {self.default_model}")
-            logging.info(f"Connected to copilot-api at: {self.base_url}")
+            logging.info(f"Connected to copilot-api at: {self.base_url} (connect={connect_timeout}s, read={request_timeout or '∞'}s, max_retries={max_retries})")
         except ImportError:
             raise ImportError(
                 "openai package not installed. Install with: pip install openai"

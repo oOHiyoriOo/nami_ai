@@ -252,9 +252,3 @@ def test_strip_images_removes_all():
 
     for m in result:
         assert m.images is None
-
-
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))

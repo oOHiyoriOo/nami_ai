@@ -4,6 +4,8 @@ AI Provider system for dynamic backend switching.
 import logging
 from typing import Any
 
+from lib.global_registry import g_data
+
 from .base_provider import AIProvider, Message, ChatResponse
 from .ollama_provider import OllamaProvider
 
@@ -89,7 +91,6 @@ class ProviderRegistry:
             ``(provider, None)`` on success, ``(None, error_message)`` on
             failure.
         """
-        from lib.global_registry import g_data
 
         cache_key = f"provider_{provider_name}"
         cached = g_data.get(cache_key)

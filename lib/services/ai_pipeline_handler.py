@@ -18,6 +18,7 @@ from typing import Any
 from lib.global_registry import g_data
 from lib.services.ai_pipeline import AIPipelineRequest, ai_pipeline
 from lib.services.event_bus import Event, EventBus
+from lib.utils import parse_model_string
 from lib.utils.ai_lock import acquire_ai_lock
 
 
@@ -80,6 +81,8 @@ class AIPipelineHandler:
         """
         adapter_name: str = data.get("adapter_name", "")
         conversation_id: str = data.get("conversation_id", "")
+        cfg = g_data.get("cfg")
+        pipeline_timeout: float = cfg.data.get("bot", {}).get("pipeline_timeout", 600) if cfg else 600
 
         try:
             resolved = self._resolve_pipeline_provider(data)
@@ -121,15 +124,18 @@ class AIPipelineHandler:
                     data={"adapter_name": adapter_name, "conversation_id": conversation_id},
                 ))
 
-            result = await ai_pipeline.run(
-                pipeline_request,
-                provider=provider,
-                model_name=model_name,
-                full_model_ref=model_ref,
-                user_name=data.get("user_name", user_id),
-                original_user_msg=content,
-                on_tool_start=on_tool_start,
-                on_tool_done=on_tool_done,
+            result = await asyncio.wait_for(
+                ai_pipeline.run(
+                    pipeline_request,
+                    provider=provider,
+                    model_name=model_name,
+                    full_model_ref=model_ref,
+                    user_name=data.get("user_name", user_id),
+                    original_user_msg=content,
+                    on_tool_start=on_tool_start,
+                    on_tool_done=on_tool_done,
+                ),
+                timeout=pipeline_timeout,
             )
 
             response_content = re.sub(
@@ -143,6 +149,22 @@ class AIPipelineHandler:
                     "conversation_id": conversation_id,
                     "content": response_content,
                     "thinking": result.thinking,
+                    "tool_messages": result.tool_messages,
+                },
+            ))
+
+        except TimeoutError:
+            logging.error(
+                "[pipeline_handler] Pipeline timeout after %.0fs (adapter=%s, conv=%s)",
+                pipeline_timeout, adapter_name, conversation_id,
+            )
+            await self._event_bus.publish(Event(
+                type="response.ready",
+                data={
+                    "adapter_name": adapter_name,
+                    "conversation_id": conversation_id,
+                    "content": "Sorry, I took too long to think about that — could you try again?",
+                    "error": True,
                 },
             ))
 
@@ -310,7 +332,6 @@ class AIPipelineHandler:
 
         model_ref: str | None = data.get("model")
         if model_ref:
-            from lib.utils.model_string import parse_model_string
             try:
                 provider_name, model_name = parse_model_string(model_ref)
                 provider = self._get_provider(provider_name, providers_config)

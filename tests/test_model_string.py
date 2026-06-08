@@ -1,5 +1,5 @@
 """
-Test suite for parse_model_string() in lib/utils/model_string.py
+Test suite for parse_model_string() in lib/utils/__init__.py
 """
 
 import sys
@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib.utils.model_string import parse_model_string
+from lib.utils import parse_model_string
 
 
 # ---------------------------------------------------------------------------

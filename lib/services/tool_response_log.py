@@ -20,7 +20,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-import aiosqlite
+from lib.utils.database import Database
 
 PLACEHOLDER_PREFIX = "[TOOL_RESPONSE:"
 PLACEHOLDER_SUFFIX = "]"
@@ -45,6 +45,7 @@ class ToolResponseLog:
 
     def __init__(self, db_path: str = "tool_responses.db"):
         self.db_path = db_path
+        self._db: Database | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -52,22 +53,29 @@ class ToolResponseLog:
 
     async def initialize(self) -> None:
         """Create the table and indices if they don't exist."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self._TABLE} (
-                    uuid            TEXT PRIMARY KEY,
-                    timestamp       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    tool_name       TEXT    NOT NULL,
-                    response_text   TEXT    NOT NULL,
-                    metadata        TEXT    NOT NULL DEFAULT '{{}}'
-                )
-            """)
-            await db.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_toolresp_timestamp
-                    ON {self._TABLE} (timestamp)
-            """)
-            await db.commit()
+        self._db = Database(backend="sqlite", path=self.db_path)
+        await self._db.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self._TABLE} (
+                uuid            TEXT PRIMARY KEY,
+                timestamp       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                tool_name       TEXT    NOT NULL,
+                response_text   TEXT    NOT NULL,
+                metadata        TEXT    NOT NULL DEFAULT '{{}}'
+            )
+        """)
+        await self._db.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_toolresp_timestamp
+                ON {self._TABLE} (timestamp)
+        """)
+        await self._db.commit()
         logging.info("ToolResponseLog initialized (db=%s)", self.db_path)
+
+    async def stop(self) -> None:
+        """Close the database connection."""
+        if self._db:
+            await self._db.close()
+            self._db = None
+        logging.info("ToolResponseLog stopped")
 
     # ------------------------------------------------------------------
     # CRUD
@@ -91,13 +99,12 @@ class ToolResponseLog:
         """
         response_uuid = uuid.uuid4().hex
         meta_json = json.dumps(metadata or {})
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                f"INSERT INTO {self._TABLE} (uuid, tool_name, response_text, metadata) "
-                "VALUES (?, ?, ?, ?)",
-                (response_uuid, tool_name, response_text, meta_json),
-            )
-            await db.commit()
+        await self._db.execute(
+            f"INSERT INTO {self._TABLE} (uuid, tool_name, response_text, metadata) "
+            "VALUES (?, ?, ?, ?)",
+            response_uuid, tool_name, response_text, meta_json,
+        )
+        await self._db.commit()
         logging.debug(
             "[tool_response_log] stored %s (%d chars)",
             response_uuid, len(response_text),
@@ -111,14 +118,11 @@ class ToolResponseLog:
             Dict with keys ``tool_name``, ``response_text``, ``metadata``, ``timestamp``,
             or ``None`` if not found.
         """
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                f"SELECT tool_name, response_text, metadata, timestamp "
-                f"FROM {self._TABLE} WHERE uuid = ?",
-                (response_uuid,),
-            ) as cursor:
-                row = await cursor.fetchone()
+        row = await self._db.fetch_one(
+            f"SELECT tool_name, response_text, metadata, timestamp "
+            f"FROM {self._TABLE} WHERE uuid = ?",
+            response_uuid,
+        )
         if not row:
             return None
         return {
@@ -130,12 +134,11 @@ class ToolResponseLog:
 
     async def delete(self, response_uuid: str) -> bool:
         """Delete a stored response. Returns True if a row was removed."""
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                f"DELETE FROM {self._TABLE} WHERE uuid = ?",
-                (response_uuid,),
-            )
-            await db.commit()
+        cursor = await self._db.execute(
+            f"DELETE FROM {self._TABLE} WHERE uuid = ?",
+            response_uuid,
+        )
+        await self._db.commit()
         return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
@@ -144,13 +147,12 @@ class ToolResponseLog:
 
     async def prune_old(self, retention_days: int = 30) -> int:
         """Remove responses older than *retention_days*. Returns count deleted."""
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                f"DELETE FROM {self._TABLE} "
-                "WHERE timestamp < datetime('now', ? || ' days')",
-                (f"-{retention_days}",),
-            )
-            await db.commit()
+        cursor = await self._db.execute(
+            f"DELETE FROM {self._TABLE} "
+            "WHERE timestamp < datetime('now', ? || ' days')",
+            f"-{retention_days}",
+        )
+        await self._db.commit()
         if cursor.rowcount:
             logging.info(
                 "[tool_response_log] Pruned %d entries older than %d days",
@@ -160,7 +162,4 @@ class ToolResponseLog:
 
     async def get_count(self) -> int:
         """Return total number of stored responses."""
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(f"SELECT COUNT(*) FROM {self._TABLE}") as cursor:
-                row = await cursor.fetchone()
-        return row[0] if row else 0
+        return await self._db.fetch_val(f"SELECT COUNT(*) FROM {self._TABLE}") or 0

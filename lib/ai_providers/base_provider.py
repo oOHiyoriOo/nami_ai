@@ -2,6 +2,10 @@
 Abstract base class for AI providers.
 Allows easy integration of different AI backends (Ollama, OpenAI, Anthropic, etc.)
 """
+import json
+import logging
+import os
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 from dataclasses import dataclass
@@ -43,6 +47,54 @@ class AIProvider(ABC):
         """
         self.config = config
         self.capabilities: set[str] = set()
+
+    def _dump_request(self, request_params: dict) -> None:
+        """
+        Write a provider request to logs/request_dump.jsonl when ``bot.request_dump``
+        is enabled in config.yml.
+
+        Each line is a self-contained JSON object::
+
+            {"ts": <epoch>, "provider": "ClassName", "model": "...",
+             "n_messages": N, "n_tokens_est": N, "request": {...}}
+
+        The ``request`` field contains the full payload — messages, tools, options —
+        exactly as sent to the backend, so you can diagnose oversized prompts.
+
+        Enable via config.yml::
+
+            bot:
+              request_dump: true
+        """
+        try:
+            from lib.global_registry import g_data
+            cfg = g_data.get("cfg")
+            if not cfg or not cfg.data.get("bot", {}).get("request_dump", False):
+                return
+
+            messages = request_params.get("messages", [])
+            total_chars = sum(len(str(m.get("content") or "")) for m in messages)
+            n_tokens_est = total_chars // 4
+
+            record = {
+                "ts": time.time(),
+                "provider": self.__class__.__name__,
+                "model": request_params.get("model", "unknown"),
+                "n_messages": len(messages),
+                "n_tokens_est": n_tokens_est,
+                "request": request_params,
+            }
+
+            os.makedirs("./logs", exist_ok=True)
+            with open("./logs/request_dump.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+
+            logging.debug(
+                "[request_dump] %s | %d messages | ~%d tokens est → logs/request_dump.jsonl",
+                self.__class__.__name__, len(messages), n_tokens_est,
+            )
+        except Exception as e:
+            logging.warning("[request_dump] Failed to write dump: %s", e)
 
     def _normalize_messages(
         self,
@@ -99,6 +151,20 @@ class AIProvider(ABC):
         model = kwargs.get('model', self.default_model)
         openai_messages = self._normalize_messages(messages)
 
+        # Convert images from Ollama format (list of base64 strings)
+        # to OpenAI vision content-parts format for any message with images.
+        for msg in openai_messages:
+            images = msg.pop("images", None)
+            if not images:
+                continue
+            content_parts = [{"type": "text", "text": msg.get("content", "")}]
+            for b64 in images:
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}" if not b64.startswith("data:") else b64}
+                })
+            msg["content"] = content_parts
+
         request_params: dict[str, Any] = {
             "model": model,
             "messages": openai_messages,
@@ -113,6 +179,28 @@ class AIProvider(ABC):
                 for tool in tools
             ]
 
+        # Forward structured output format as response_format (OpenAI API)
+        format_schema = kwargs.get("format")
+        if format_schema:
+            request_params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": format_schema,
+            }
+
+        # Handle thinking/reasoning mode.
+        # When think=True, map to reasoning_effort for OpenAI reasoning models
+        # (o1, o3, o4 series). For non-reasoning models, think=True is logged
+        # but not forwarded — the OpenAI API doesn't have a generic "think" param.
+        think = kwargs.get("think")
+        if think:
+            if any(model.startswith(p) for p in ("o1", "o3", "o4")):
+                request_params["reasoning_effort"] = "high"
+            else:
+                logging.debug(
+                    f"think=True ignored: model '{model}' is not a known reasoning model"
+                )
+
+        self._dump_request(request_params)
         response = await self.client.chat.completions.create(**request_params)
         message = response.choices[0].message
 
@@ -121,6 +209,7 @@ class AIProvider(ABC):
             tool_calls = [
                 {
                     "id": tc.id,
+                    "type": "function",
                     "function": {
                         "name": tc.function.name,
                         "arguments": tc.function.arguments
@@ -128,6 +217,12 @@ class AIProvider(ABC):
                 }
                 for tc in message.tool_calls
             ]
+
+        # Extract thinking/reasoning content if think mode was requested.
+        # OpenAI reasoning models may expose it as reasoning_content on the message.
+        thinking = None
+        if think:
+            thinking = getattr(message, "reasoning_content", None) or None
 
         return ChatResponse(
             content=message.content or "",
@@ -138,7 +233,8 @@ class AIProvider(ABC):
                 "prompt_tokens": response.usage.prompt_tokens,
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens
-            } if response.usage else None
+            } if response.usage else None,
+            thinking=thinking,
         )
 
     @abstractmethod

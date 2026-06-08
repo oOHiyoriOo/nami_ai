@@ -10,12 +10,7 @@ import re
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-try:
-    from lib.system_prompt_parser import NamiSystemPrompt
-    DEPENDENCIES_AVAILABLE = True
-except ImportError as e:
-    DEPENDENCIES_AVAILABLE = False
-    MISSING_DEPENDENCY = str(e)
+from lib.system_prompt_parser import NamiSystemPrompt
 
 
 def test_prompt_load():
@@ -149,7 +144,23 @@ def test_unknown_and_known_templates_mixed():
         Path(temp_path).unlink(missing_ok=True)
 
 
-if __name__ == "__main__":
-    import pytest
-    import sys
-    sys.exit(pytest.main([__file__, "-v"]))
+def test_owner_placeholder_default():
+    """Test {{owner}} falls back to 'the user' when no config is loaded"""
+    prompt_content = "Send a message only if it's useful for {{owner}}."
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as f:
+        f.write(prompt_content)
+        temp_path = f.name
+    try:
+        prompt = NamiSystemPrompt(temp_path)
+        parsed = asyncio.run(prompt.get_prompt())
+        assert "{{owner}}" not in parsed, f"{{owner}} not replaced in: {parsed!r}"
+        assert "the user" in parsed, f"Expected default 'the user' in: {parsed!r}"
+    finally:
+        Path(temp_path).unlink(missing_ok=True)
+
+
+def test_owner_placeholder_from_inline_prompt():
+    """Test {{owner}} resolution works with inline prompt (no file path needed)"""
+    prompt = NamiSystemPrompt(path="", prompt="Research findings for {{owner}} only.")
+    parsed = asyncio.run(prompt.get_prompt())
+    assert "{{owner}}" not in parsed, f"{{owner}} not replaced in: {parsed!r}"

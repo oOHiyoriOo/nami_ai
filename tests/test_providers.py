@@ -494,7 +494,233 @@ def test_clear_instances_removes_all_cached_providers():
     assert not (ProviderRegistry._instances), f"_instances not empty: {ProviderRegistry._instances}"
 
 
-if __name__ == "__main__":
-    import sys
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
+def test_ollama_chat_includes_n_keep():
+    """OllamaProvider.chat() includes n_keep in the request body to preserve
+    system prompt tokens during context overflow (#302)."""
+    from unittest.mock import patch, MagicMock
+
+    with patch("lib.ai_providers.ollama_provider.OllamaClient") as mock_client_class:
+        mock_httpx = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "model": "llama3.2",
+            "created_at": "2024-01-01T00:00:00Z",
+            "message": {"role": "assistant", "content": "Hello!"},
+            "done": True,
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_httpx.post.return_value = mock_response
+        mock_client = MagicMock()
+        mock_client._client = mock_httpx
+        mock_client_class.return_value = mock_client
+
+        from lib.ai_providers.ollama_provider import OllamaProvider
+        from lib.ai_providers.base_provider import Message
+
+        provider = OllamaProvider({"url": "http://localhost:11434"})
+
+        # Create a chat with a system message
+        messages = [
+            Message(role="system", content="You are a helpful assistant named Nami."),
+            Message(role="user", content="Hello"),
+        ]
+
+        import asyncio
+        response = asyncio.run(provider.chat(messages, model="llama3.2"))
+
+        # Verify the request was made with n_keep
+        assert mock_httpx.post.called, "Expected httpx post to be called"
+
+        _, kwargs = mock_httpx.post.call_args
+        request_json = kwargs["json"]
+
+        # n_keep should be present and positive
+        assert "n_keep" in request_json, (
+            f"n_keep missing from request body. Keys: {list(request_json.keys())}"
+        )
+        n_keep = request_json["n_keep"]
+        assert n_keep >= 64, f"n_keep should be >= 64 (minimum buffer), got {n_keep}"
+
+        # With a system message present, n_keep must exceed the buffer alone
+        assert n_keep > 64, f"n_keep should be > 64 with system message, got {n_keep}"
+
+        # Verify response was processed correctly
+        assert response.content == "Hello!"
+        assert response.model == "llama3.2"
+
+
+# ---------------------------------------------------------------------------
+# _openai_compatible_chat — thinking/reasoning mode tests
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_openai_response(content="Hello", reasoning_content=None):
+    """Build a mock OpenAI chat completion response with the given fields."""
+    from unittest.mock import MagicMock
+
+    mock_message = MagicMock()
+    mock_message.content = content
+    mock_message.tool_calls = None
+    mock_message.reasoning_content = reasoning_content
+
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_choice.finish_reason = "stop"
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 10
+    mock_usage.completion_tokens = 5
+    mock_usage.total_tokens = 15
+
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    mock_response.model = "test-model"
+    mock_response.usage = mock_usage
+
+    return mock_response
+
+
+def test_openai_compatible_think_with_reasoning_model():
+    """think=True with an o1/o3/o4 model adds reasoning_effort='high'."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+
+    mock_response = _make_mock_openai_response()
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        from lib.ai_providers.openai_provider import OpenAIProvider
+        from lib.ai_providers.base_provider import Message
+
+        p = OpenAIProvider({"api_key": "sk-test"})
+        p.client = mock_client
+
+        import asyncio
+        asyncio.run(p._openai_compatible_chat(
+            [Message(role="user", content="hello")],
+            model="o1",
+            think=True,
+        ))
+
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs.get("reasoning_effort") == "high", (
+        f"reasoning_effort should be 'high' for o1 model, got {call_kwargs}"
+    )
+
+
+def test_openai_compatible_think_with_non_reasoning_model():
+    """think=True with gpt-4 does NOT add reasoning_effort."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+
+    mock_response = _make_mock_openai_response()
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        from lib.ai_providers.openai_provider import OpenAIProvider
+        from lib.ai_providers.base_provider import Message
+
+        p = OpenAIProvider({"api_key": "sk-test"})
+        p.client = mock_client
+
+        import asyncio
+        asyncio.run(p._openai_compatible_chat(
+            [Message(role="user", content="hello")],
+            model="gpt-4",
+            think=True,
+        ))
+
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert "reasoning_effort" not in call_kwargs, (
+        f"reasoning_effort should NOT be set for gpt-4, got {call_kwargs}"
+    )
+
+
+def test_openai_compatible_think_extracts_reasoning_content():
+    """When think=True and reasoning_content is present, it populates ChatResponse.thinking."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+
+    mock_response = _make_mock_openai_response(
+        content="The answer is 42",
+        reasoning_content="Let me think about this step by step...",
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        from lib.ai_providers.openai_provider import OpenAIProvider
+        from lib.ai_providers.base_provider import Message
+
+        p = OpenAIProvider({"api_key": "sk-test"})
+        p.client = mock_client
+
+        import asyncio
+        result = asyncio.run(p._openai_compatible_chat(
+            [Message(role="user", content="hello")],
+            model="o3-mini",
+            think=True,
+        ))
+
+    assert result.thinking == "Let me think about this step by step...", (
+        f"Expected reasoning content, got {result.thinking!r}"
+    )
+    assert result.content == "The answer is 42", (
+        f"Content should be the main response, got {result.content!r}"
+    )
+
+
+def test_openai_compatible_no_think_leaves_thinking_none():
+    """Without think=True, ChatResponse.thinking stays None."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+
+    mock_response = _make_mock_openai_response()
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        from lib.ai_providers.openai_provider import OpenAIProvider
+        from lib.ai_providers.base_provider import Message
+
+        p = OpenAIProvider({"api_key": "sk-test"})
+        p.client = mock_client
+
+        import asyncio
+        result = asyncio.run(p._openai_compatible_chat(
+            [Message(role="user", content="hello")],
+            model="gpt-4",
+        ))
+
+    assert result.thinking is None, (
+        f"thinking should be None without think=True, got {result.thinking!r}"
+    )
+
+
+def test_openai_compatible_think_false_no_effect():
+    """think=False acts like no think kwarg — no reasoning_effort, thinking=None."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+
+    mock_response = _make_mock_openai_response()
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        from lib.ai_providers.openai_provider import OpenAIProvider
+        from lib.ai_providers.base_provider import Message
+
+        p = OpenAIProvider({"api_key": "sk-test"})
+        p.client = mock_client
+
+        import asyncio
+        result = asyncio.run(p._openai_compatible_chat(
+            [Message(role="user", content="hello")],
+            model="o1",
+            think=False,
+        ))
+
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert "reasoning_effort" not in call_kwargs, (
+        f"reasoning_effort should NOT be set when think=False, got {call_kwargs}"
+    )
+    assert result.thinking is None, (
+        f"thinking should be None when think=False, got {result.thinking!r}"
+    )
