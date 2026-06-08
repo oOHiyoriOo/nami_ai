@@ -5,8 +5,8 @@ Uses any AI provider to extract structured memories from conversation content.
 import logging
 import asyncio
 import json
-import re
 import os
+import re
 from typing import Any
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,12 +14,7 @@ from datetime import datetime
 from lib.ai_providers.base_provider import Message
 from lib.chat_helper import format_user_message
 from lib.global_registry import g_data
-
-
-
-def slugify(name: str) -> str:
-    """Convert a human-readable location name to a machine-friendly ID."""
-    return re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+from lib.utils import slugify
 
 
 @dataclass
@@ -174,8 +169,13 @@ class MemoryExtractor:
             # 3. Provider's default model
             model = self.model_name
             if not model:
+                from lib.utils import resolve_provider_model
                 memory_config = cfg.data.get('memory', {})
-                model = memory_config.get('extraction_model')
+                _, model = resolve_provider_model(
+                    memory_config.get('extraction_model'),
+                    fallback_provider=self.provider_name,
+                    fallback_model='',
+                )
             if not model:
                 model = provider_config.get('default_model')
             if not model:

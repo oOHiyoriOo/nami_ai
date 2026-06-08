@@ -15,23 +15,11 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from lib.utils import resolve_project_root
+
 SAFE_POINT_TAG = "nami_safe_point"
 SESSION_FILE = ".nami_change_session"
 BACKUPS_DIR = ".nami_backups"
-
-
-def _resolve_project_root() -> Path:
-    """Find the project root containing api_server.py or lib/services."""
-    for anchor in [Path("/workspace/project/nami_ai"), Path.cwd()]:
-        if (anchor / "api_server.py").exists():
-            return anchor
-    # Fallback: walk upward from cwd
-    current = Path.cwd()
-    for _ in range(5):
-        if (current / "api_server.py").exists():
-            return current
-        current = current.parent
-    return Path.cwd()
 
 
 def _ensure_git_repo(src_dir: Path) -> None:
@@ -183,7 +171,7 @@ def recover_from_crash(project_root: Path | None = None) -> bool:
     Returns True if recovery was performed, False if no action needed.
     """
     if project_root is None:
-        project_root = _resolve_project_root()
+        project_root = resolve_project_root()
 
     marker = read_session_marker(project_root)
     if marker is None:

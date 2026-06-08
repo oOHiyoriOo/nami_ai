@@ -5,7 +5,7 @@ Tracks successfully used models and provides quick access to them.
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from dataclasses import dataclass, asdict
 
@@ -55,7 +55,7 @@ class ModelCache:
                 return
 
             provider, model = full_model_name.split('/', 1)
-            current_time = datetime.utcnow().isoformat() + "Z"
+            current_time = datetime.now(tz=timezone.utc).isoformat()
 
             if full_model_name in self._cache:
                 # Update existing entry

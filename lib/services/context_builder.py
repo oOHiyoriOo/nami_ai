@@ -6,6 +6,7 @@ import json
 import logging
 from collections import deque
 
+from lib.global_registry import g_data
 from lib.services.memory_service import MemoryService
 
 
@@ -36,11 +37,15 @@ class MessageContext:
 class ContextBuilder:
     """Builds conversation context with personality and memories."""
 
+    # Character-based token estimator: ~4 chars per token for English text
+    _CHARS_PER_TOKEN = 4
+
     def __init__(
         self,
         system_prompt_provider,
         memory_service: MemoryService | None = None,
         memory_window_turns: int = 3,
+        max_history_tokens: int = 0,
     ):
         """
         Initialize context builder.
@@ -51,13 +56,47 @@ class ContextBuilder:
             memory_window_turns: Number of past turns whose recalled memories are
                 carried forward into the current context (sliding window).  Set to
                 0 to disable.  Default: 3.
+            max_history_tokens: Token budget for conversation history.
+                Messages beyond the budget are trimmed (most recent kept).
+                System messages are always preserved.  Default: 0 (disabled —
+                the provider enforces its own context window).
         """
         self.system_prompt_provider = system_prompt_provider
         self.memory_service = memory_service
         self._memory_window_turns = memory_window_turns
+        self._max_history_tokens = max_history_tokens
         # Per-conversation deque of raw memory-dict lists (one list per turn).
         # Capped at memory_window_turns entries — oldest drops off automatically.
         self._memory_windows: dict[str, deque[list[dict]]] = {}
+
+    @staticmethod
+    def _trim_messages_to_token_budget(messages: list[dict], max_tokens: int) -> list[dict]:
+        """Keep the most recent messages that fit within the token budget.
+
+        System messages are always preserved.  Chat messages (user, assistant,
+        tool) are kept in reverse-chronological order until the budget is
+        exhausted.  Token estimation is character-based (~4 chars / token).
+
+        Args:
+            messages: Full list of message dicts with ``role`` and ``content``.
+            max_tokens: Token budget ceiling.
+
+        Returns:
+            Trimmed message list.
+        """
+        system = [m for m in messages if m["role"] == "system"]
+        chat = [m for m in messages if m["role"] != "system"]
+
+        budget = max_tokens
+        kept: list[dict] = []
+        for msg in reversed(chat):
+            est = len(msg.get("content", "")) // ContextBuilder._CHARS_PER_TOKEN
+            if budget - est < 0:
+                break
+            budget -= est
+            kept.append(msg)
+
+        return system + list(reversed(kept))
 
     async def build_context(
         self,
@@ -85,7 +124,7 @@ class ContextBuilder:
             channel_name: Channel name
             guild_name: Server / group name
             is_dm: Whether this is a direct message
-            user_name: Raw username (e.g. '<username>')
+            user_name: Raw username (e.g. 'alice')
 
         Returns:
             Enhanced message list
@@ -117,7 +156,9 @@ class ContextBuilder:
         # Surface any background tasks (research, etc.) completed since the last turn
         self._add_task_notifications(context)
 
-        # Add original messages
+        # Add original messages (trimmed to token budget)
+        if self._max_history_tokens > 0:
+            messages = self._trim_messages_to_token_budget(messages, self._max_history_tokens)
         context.add_original_messages(messages)
 
         return context.build()
@@ -163,7 +204,7 @@ class ContextBuilder:
 
         user_info = {
             "user": display_name,            # "Zero"
-            "username": raw_username,        # "<username>"
+            "username": raw_username,        # "alice"
             "user_id": scoped_user_id,       # "discord:123456789"
             "platform": platform,            # "Discord"
             "channel": channel_name,         # "#lab-chat"
@@ -207,12 +248,13 @@ class ContextBuilder:
 
             # Resolve cross-platform identities so memories are shared
             all_user_ids = [user_id]
-            try:
-                resolved = await self.memory_service.memory_db.resolve_canonical_users(user_id)
-                if resolved:
-                    all_user_ids = resolved
-            except Exception:
-                pass  # Graceful fallback if identity resolution fails
+            if self.memory_service.memory_db is not None:
+                try:
+                    resolved = await self.memory_service.memory_db.resolve_canonical_users(user_id)
+                    if resolved:
+                        all_user_ids = resolved
+                except Exception as e:
+                    logging.warning("Identity resolution failed for user %s: %s", user_id, e)
 
             # --- Step 1: fetch this turn's memories (raw dicts) ------------------
             current_turn: list[dict] = []
@@ -265,7 +307,6 @@ class ContextBuilder:
         next time Nami is spoken to after the task finished.
         """
         try:
-            from lib.global_registry import g_data
             queue = g_data.get("task_notification_queue")
             if not queue:
                 return
@@ -289,7 +330,6 @@ class ContextBuilder:
     def _add_completed_jobs(self, context: MessageContext) -> None:
         """Inject any sandbox jobs that completed since the last conversation turn."""
         try:
-            from lib.global_registry import g_data
             sandbox = g_data.get("sandbox_manager")
             if not sandbox:
                 return

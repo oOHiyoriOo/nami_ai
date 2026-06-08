@@ -19,8 +19,11 @@ import logging
 import re
 import time
 
+import aiosqlite
+
 from lib.global_registry import g_data
 from lib.services.heartbeat_module import HeartbeatModule
+from lib.utils import resolve_provider_model
 from lib.utils.ai_lock import acquire_ai_lock
 from lib.utils.sqlite_kv import SqliteKVStore
 
@@ -98,8 +101,11 @@ class MemoryGrooming(HeartbeatModule):
             self.cooldown_seconds = mod_cfg["cooldown"]
 
         self._min_new_memories: int = mod_cfg.get("min_new_memories", 5)
-        self._provider_name: str = mod_cfg.get("provider", "ollama")
-        self._model_name: str = mod_cfg.get("model", "llama3.2")
+        self._provider_name, self._model_name = resolve_provider_model(
+            mod_cfg.get("model"),
+            fallback_provider=mod_cfg.get("provider", "ollama"),
+            fallback_model="llama3.2",
+        )
         self._max_tool_calls: int = mod_cfg.get("max_tool_calls", 8)
         self._max_tool_rounds: int = mod_cfg.get("max_tool_rounds", 10)
         self._auto_merge: bool = mod_cfg.get("auto_merge", False)
@@ -109,6 +115,25 @@ class MemoryGrooming(HeartbeatModule):
             f"provider={self._provider_name}, model={self._model_name}, "
             f"max_tool_calls={self._max_tool_calls}, auto_merge={self._auto_merge}"
         )
+
+    # ------------------------------------------------------------------
+    # Lifecycle — connection management
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Open the persistent DB connection and initialize schema."""
+        self._conn = await aiosqlite.connect(self._db_path)
+        self._state._conn = self._conn
+        await self._init_db()
+        self._db_initialised = True
+        logging.info("[memory_grooming] MemoryGrooming started (db=%s)", self._db_path)
+
+    async def stop(self) -> None:
+        """Close the DB connection."""
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+        logging.info("[memory_grooming] MemoryGrooming stopped")
 
     # ------------------------------------------------------------------
     # HeartbeatModule interface
@@ -122,10 +147,6 @@ class MemoryGrooming(HeartbeatModule):
         1. memory_db available?
         2. Enough new memories since last grooming?
         """
-        if not self._db_initialised:
-            await self._init_db()
-            self._db_initialised = True
-
         # Gate 1: memory_db must be available
         memory_db = g_data.get("memory_db")
         if not memory_db:
@@ -341,16 +362,14 @@ class MemoryGrooming(HeartbeatModule):
 
     async def _init_db(self) -> None:
         """Create the grooming_state table if it doesn't exist."""
-        import aiosqlite
-
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                """CREATE TABLE IF NOT EXISTS grooming_state (
-                    key   TEXT PRIMARY KEY,
-                    value TEXT
-                )"""
-            )
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS grooming_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )"""
+        )
+        await db.commit()
 
     # ------------------------------------------------------------------
     # Internal — memory counting

@@ -8,7 +8,8 @@ entries older than a configurable threshold (default: 7 days).
 import logging
 
 from lib.services.heartbeat_module import HeartbeatModule
-from lib.services.nami_session_cache import cleanup_old_sessions, _resolve_project_root
+from lib.utils import resolve_project_root
+from lib.services.nami_session_cleanup import cleanup_old_sessions
 
 
 class SessionCacheCleanup(HeartbeatModule):
@@ -26,7 +27,7 @@ class SessionCacheCleanup(HeartbeatModule):
         return True  # Always eligible; cooldown handles rate-limiting
 
     async def action(self) -> None:
-        project_root = _resolve_project_root()
+        project_root = resolve_project_root()
         deleted = cleanup_old_sessions(project_root, self.max_age_days)
         if deleted:
             logging.info(

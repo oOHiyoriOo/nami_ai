@@ -7,6 +7,15 @@ from typing import Any
 
 from lib.global_registry import g_data
 
+_DEFAULT_DB = "scheduler.db"
+
+
+def _db_path() -> str:
+    cfg = g_data.get("cfg")
+    if cfg:
+        return cfg.data.get("scheduler", {}).get("db_path", _DEFAULT_DB)
+    return _DEFAULT_DB
+
 
 def _get_sandbox_or_error():
     """Return (sandbox_manager, None) or (None, tool_error) if unavailable."""
@@ -58,9 +67,9 @@ def _require_active_session() -> dict | None:
     Returns:
         Session data dict (safe_point, session_start, description) or None.
     """
-    from lib.services.session_manager import _resolve_project_root
+    from lib.utils import resolve_project_root
 
-    project_root = _resolve_project_root()
+    project_root = resolve_project_root()
     session_file = project_root / ".nami_change_session"
     if not session_file.exists():
         return None

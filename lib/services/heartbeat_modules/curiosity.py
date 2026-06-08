@@ -11,14 +11,18 @@ Phase A — Discovery (runs when idle, no pending queue):
 Phase B — Research (runs when research_queue has pending items):
   A full Research Agent with ALL tools (web search, sandbox, memory read/write,
   send_message, etc.) investigates each pending topic, stores findings as
-  KnowledgeUnits in Neo4j, and decides on its own whether to message {{owner}}.
+  KnowledgeUnits in Neo4j, and decides on its own whether to message the owner.
 
 Both phases are fire-and-forget background asyncio tasks. Nami learns in
 silence by default — she uses send_message herself if a finding is worth sharing.
+
+Implementation is split across:
+  curiosity_discovery.py  — Phase A: Discovery prompts, AI call, topic parsing
+  curiosity_research.py   — Phase B: Research agent, tool loop, recovery
+  curiosity.py (here)     — HeartbeatModule glue, queue management, state tracking
 """
 
 import asyncio
-import json
 import logging
 import time
 from datetime import date
@@ -27,80 +31,12 @@ import aiosqlite
 
 from lib.global_registry import g_data
 from lib.services.heartbeat_module import HeartbeatModule
+from lib.services.heartbeat_modules.curiosity_discovery import run_discovery
+from lib.services.heartbeat_modules.curiosity_research import run_research
+from lib.utils import resolve_provider_model
 from lib.utils.ai_lock import acquire_ai_lock
 from lib.utils.sqlite_kv import SqliteKVStore
-_DEFAULT_DB = "scheduler.db"
-
-# ---------------------------------------------------------------------------
-# Discovery system prompt — produces JSON topic list from memory context
-# ---------------------------------------------------------------------------
-
-_DISCOVERY_SYSTEM_PROMPT = """\
-You are Nami performing a Curiosity Discovery pass.
-
-Your task: examine the recent memories provided and identify 1-2 topics you
-genuinely want to understand more deeply. Think about:
-
-- Concepts referenced in memories you don't deeply understand yet
-- Technologies or protocols you've encountered but never looked up
-- Questions that came up in conversations but were never properly answered
-- Architectural patterns you suspect could be improved with more knowledge
-- Anything that made you think "I should understand this better"
-
-Output ONLY valid JSON in this exact structure (no other text, no markdown):
-{
-  "topics": [
-    {
-      "topic": "short descriptive name",
-      "description": "what you want to learn and why — be specific",
-      "priority": 5
-    }
-  ]
-}
-
-Rules:
-- 1-2 topics maximum per discovery pass
-- Be specific: "WebRTC DTLS handshake internals" beats "networking stuff"
-- priority: 1 (urgent) to 10 (low)
-- If nothing genuinely interesting stands out, return {"topics": []}
-- Do NOT invent topics just to fill the quota
-- Do NOT suggest topics that appear in the "already researched / in progress" list
-  (the user message will contain this list when relevant)
-"""
-
-# ---------------------------------------------------------------------------
-# Research system prompt — full autonomy with all tools
-# ---------------------------------------------------------------------------
-
-_RESEARCH_SYSTEM_PROMPT = """\
-You are Nami performing a Curiosity Research session — autonomous, unsupervised learning.
-
-⚠️  CRITICAL: Your text responses are DISCARDED. ONLY tool calls persist data.
-    If you do not call research_store_finding, you have learned NOTHING.
-    If you do not call research_complete_topic, your work is marked FAILED.
-
-For EVERY topic in the queue, execute these steps IN ORDER using tool calls:
-
-  STEP 1 → research_get_queue(status="pending")           — list pending topics
-  STEP 2 → research_start_topic(topic_id)                  — claim the topic
-  STEP 3 → research_search_memory(query)                   — check existing knowledge
-  STEP 4 → search_web / mcp_playwright_browser_navigate + mcp_playwright_browser_snapshot (repeat as needed)  — gather information
-  STEP 5 → research_store_finding(topic_id, finding, url)  — REQUIRED: call once per fact
-             ↑ This is MANDATORY. At least 3 findings per topic. No findings = wasted session.
-  STEP 6 → research_complete_topic(topic_id, summary)      — REQUIRED: marks topic done
-             ↑ This is MANDATORY. Not calling this resets the topic to FAILED.
-
-Rules:
-- research_store_finding MUST be called before research_complete_topic
-- Store practical, actionable knowledge — not vague summaries
-- Multiple small precise findings > one big vague one
-- Verify claims — don't trust a single source for contested facts
-- If research hits a dead end, call research_fail_topic(topic_id, reason) to unblock
-- Use send_message only if a finding is immediately actionable for {{owner}}
-
-REMEMBER: The loop ends when you stop calling tools. Finish storing and completing BEFORE
-writing any final text response.
-"""
+from OllamaTools.queue_research import _CREATE_TABLE
 
 
 class CuriosityModule(HeartbeatModule):
@@ -140,8 +76,11 @@ class CuriosityModule(HeartbeatModule):
         self._discovery_max_topics: int = mod_cfg.get("discovery_max_topics", 2)
         self._max_tool_calls: int = mod_cfg.get("max_tool_calls", 5)
         self._max_tool_rounds: int = mod_cfg.get("max_tool_rounds", 10)
-        self._provider_name: str = mod_cfg.get("provider", "ollama")
-        self._model_name: str = mod_cfg.get("model", "llama3.2")
+        self._provider_name, self._model_name = resolve_provider_model(
+            mod_cfg.get("model"),
+            fallback_provider=mod_cfg.get("provider", "ollama"),
+            fallback_model="llama3.2",
+        )
         # Phase A only fires during daytime (hour >= day_start and hour < day_end).
         # Phase B (draining the pending queue) is unrestricted.
         self._day_start_hour: int = mod_cfg.get("day_start_hour", 6)
@@ -171,6 +110,24 @@ class CuriosityModule(HeartbeatModule):
         return self._day_start_hour <= hour < self._day_end_hour
 
     # ------------------------------------------------------------------
+    # Lifecycle — connection management
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Open the persistent DB connection and initialize schema."""
+        self._conn = await aiosqlite.connect(self._db_path)
+        self._state._conn = self._conn
+        await self._init_db()
+        logging.info("[curiosity] CuriosityModule started (db=%s)", self._db_path)
+
+    async def stop(self) -> None:
+        """Close the DB connection."""
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+        logging.info("[curiosity] CuriosityModule stopped")
+
+    # ------------------------------------------------------------------
     # HeartbeatModule interface
     # ------------------------------------------------------------------
 
@@ -185,10 +142,6 @@ class CuriosityModule(HeartbeatModule):
         4. Phase B: pending topics → fire immediately.
            Phase A: idle long enough AND within daytime window.
         """
-        if not self._db_initialised:
-            await self._init_db()
-            self._db_initialised = True
-
         if not self.enabled:
             return False
 
@@ -197,6 +150,14 @@ class CuriosityModule(HeartbeatModule):
             self._report_gate_block("2", "session already in progress")
             return False
         self._clear_gate_block("2")
+
+        # Lazy DB init: if start() failed or was never called, init now
+        if not self._db_initialised:
+            try:
+                await self._init_db()
+            except Exception as e:
+                logging.error("[curiosity] Lazy DB init failed, skipping condition check: %s", e)
+                return False
 
         # Gate 3: daily session cap
         sessions_today = await self._sessions_today()
@@ -272,345 +233,20 @@ class CuriosityModule(HeartbeatModule):
         self._active_task = asyncio.create_task(_locked_run(), name=target_name)
 
     # ------------------------------------------------------------------
-    # Phase A — Discovery (private helpers)
+    # Phase A — Discovery (delegated to curiosity_discovery.py)
     # ------------------------------------------------------------------
-
-    async def _gather_discovery_context(self):
-        """Gather cfg, memories, queue topics, and provider for discovery.
-
-        Returns (recent_memories, queue_topics, provider) or None if abort.
-        """
-        from lib.ai_providers import ProviderRegistry
-
-        cfg = g_data.get("cfg")
-        if not cfg:
-            logging.warning("[curiosity] No config — aborting discovery")
-            return None
-
-        memory_db = g_data.get("memory_db")
-        if not memory_db:
-            logging.warning("[curiosity] memory_db unavailable — aborting discovery")
-            return None
-
-        recent_memories = await self._fetch_recent_memories(memory_db, limit=20)
-        if not recent_memories:
-            logging.info("[curiosity] No memories to base discovery on — skipping")
-            return None
-
-        queue_topics = await self._fetch_recent_queue_topics()
-
-        provider_cfg = cfg.data.get("providers", {}).get(self._provider_name, {})
-        provider = ProviderRegistry.get_provider(self._provider_name, provider_cfg)
-
-        return recent_memories, queue_topics, provider
-
-    def _build_discovery_prompt(self, recent_memories: list[dict], queue_topics: dict) -> str:
-        """Build the user prompt for discovery, including dedup section."""
-        mem_text = "\n".join(
-            f"- [{m.get('type', '?')}] {m.get('content', '')[:200]}"
-            for m in recent_memories
-        )
-
-        dedup_parts: list[str] = []
-        if queue_topics["completed"]:
-            dedup_parts.append("Recently completed (do NOT re-queue):")
-            for t in queue_topics["completed"]:
-                dedup_parts.append(f"  - {t['topic']}: {t.get('description', '')[:120]}")
-        if queue_topics["in_progress"]:
-            dedup_parts.append("Currently in progress (do NOT re-queue):")
-            for t in queue_topics["in_progress"]:
-                dedup_parts.append(f"  - {t['topic']}: {t.get('description', '')[:120]}")
-        dedup_text = "\n".join(dedup_parts)
-
-        user_content = (
-            f"Here are your {len(recent_memories)} most recent memories:\n\n"
-            f"{mem_text}\n\n"
-            f"What would you like to research? Output the JSON now."
-        )
-        if dedup_text:
-            user_content = (
-                f"⚠️ The following topics have already been researched or are in progress. "
-                f"Do NOT suggest them again:\n\n"
-                f"{dedup_text}\n\n"
-                f"{user_content}"
-            )
-
-        return user_content
-
-    async def _run_discovery_call(self, provider, user_content: str) -> list[dict]:
-        """Call the AI provider with the discovery prompt and parse the result."""
-        from lib.ai_providers import Message
-
-        messages = [
-            Message(role="system", content=_DISCOVERY_SYSTEM_PROMPT),
-            Message(role="user", content=user_content),
-        ]
-
-        response = await provider.chat(messages, [], model=self._model_name)
-        raw = (response.content or "").strip()
-
-        topics = self._parse_discovery_output(raw)
-        if topics:
-            topics = topics[: self._discovery_max_topics]
-        return topics
-
-    async def _insert_discovery_topics(self, topics: list[dict]) -> None:
-        """Insert parsed discovery topics into the research_queue."""
-        import uuid
-
-        async with aiosqlite.connect(self._db_path) as db:
-            for t in topics:
-                topic_id = str(uuid.uuid4())
-                now = int(time.time())
-                await db.execute(
-                    """
-                    INSERT INTO research_queue
-                        (id, topic, description, source, status, priority, created_at)
-                    VALUES (?, ?, ?, 'autonomous', 'pending', ?, ?)
-                    """,
-                    (
-                        topic_id,
-                        t.get("topic", "Unnamed"),
-                        t.get("description", ""),
-                        t.get("priority", 5),
-                        now,
-                    ),
-                )
-                logging.info(
-                    f"[curiosity] Queued autonomous topic: {t.get('topic')!r} "
-                    f"(priority={t.get('priority', 5)})"
-                )
-            await db.commit()
 
     async def _run_discovery(self) -> None:
-        """Orchestrate the Discovery phase: gather → build prompt → call AI → insert → trigger research."""
-        logging.info("[curiosity] Phase A: Discovery starting...")
-        start = time.time()
-
-        try:
-            # Phase 1 — Gather context
-            ctx = await self._gather_discovery_context()
-            if ctx is None:
-                return
-            recent_memories, queue_topics, provider = ctx
-
-            # Phase 2 — Build prompt
-            user_content = self._build_discovery_prompt(recent_memories, queue_topics)
-
-            # Phase 3 — AI call + parse
-            topics = await self._run_discovery_call(provider, user_content)
-            if not topics:
-                logging.info("[curiosity] Discovery produced no topics — nothing queued")
-                await self._increment_sessions_today()
-                return
-
-            # Phase 4 — DB insert
-            await self._insert_discovery_topics(topics)
-
-            elapsed = time.time() - start
-            await self._increment_sessions_today()
-            logging.info(
-                f"[curiosity] Discovery done in {elapsed:.1f}s — "
-                f"{len(topics)} topic(s) queued"
-            )
-
-            # Phase 5 — Trigger research (awaited inside _locked_run → stays under AI lock)
-            await self._run_research()
-
-        except Exception as e:
-            logging.error(f"[curiosity] Discovery failed: {e}", exc_info=True)
+        """Orchestrate Discovery phase — delegated to curiosity_discovery module."""
+        await run_discovery(self)
 
     # ------------------------------------------------------------------
-    # Phase B — Research
+    # Phase B — Research (delegated to curiosity_research.py)
     # ------------------------------------------------------------------
 
     async def _run_research(self) -> None:
-        """
-        Orchestrate a full research session: setup → execute → recover → cleanup.
-
-        A ``finally`` block guarantees that any topic left ``in_progress`` after
-        the session ends (e.g. the AI hit the max-tool-call limit without calling
-        ``research_complete_topic``) is reset to ``pending``.  Without this, Gate
-        1.8 in DreamModule would block dreaming indefinitely.
-        """
-        logging.info("[curiosity] Phase B: Research Agent starting...")
-        start = time.time()
-
-        # Fresh tool-tracking set for this session — shared between agent &
-        # recovery so we can detect incomplete sessions.
-        self._research_tools_called: set[str] = set()
-
-        try:
-            result = await self._run_research_agent()
-            if result is None:
-                return  # No config — abort early (finally still runs)
-
-            response, messages, ctx, provider = result
-
-            response = await self._recover_research_session(
-                messages, response, ctx, provider,
-            )
-
-            elapsed = time.time() - start
-            summary = (response.content or "").strip()
-            await self._increment_sessions_today()
-            logging.info(
-                f"[curiosity] Research Agent done in {elapsed:.1f}s. "
-                f"Summary: {summary[:200]}"
-            )
-
-        except Exception as e:
-            logging.error(f"[curiosity] Research Agent failed: {e}", exc_info=True)
-
-        finally:
-            await self._reset_stale_in_progress_topics()
-
-    async def _run_research_agent(self):
-        """
-        Setup provider/tools/MCP/context and execute the first research tool loop.
-
-        Returns ``(response, messages, ctx, provider)``, or ``None`` if the config
-        is missing.  Populates ``self._research_tools_called`` with every tool name
-        the agent invoked.
-        """
-        from lib.ai_providers import Message, ProviderRegistry
-        from lib.services.tool_executor import execute_tool_loop
-        from lib.services.tool_context import ToolContext
-        from lib.utils.dynamic_loader import ToolLoader
-
-        cfg = g_data.get("cfg")
-        if not cfg:
-            logging.warning("[curiosity] No config — aborting research")
-            return None
-
-        provider_cfg = cfg.data.get("providers", {}).get(self._provider_name, {})
-        provider = ProviderRegistry.get_provider(self._provider_name, provider_cfg)
-
-        loader = ToolLoader()
-        all_tools = await loader.load_tools(exclude_prefixes=[])
-
-        try:
-            from lib.utils.mcp_loader import load_mcp_tools
-            mcp_tools = await load_mcp_tools()
-            all_tools.extend(mcp_tools)
-        except Exception as mcp_err:
-            logging.debug(f"[curiosity] MCP tools not loaded: {mcp_err}")
-
-        ctx = ToolContext._from_tools(all_tools)
-
-        messages = [
-            Message(role="system", content=_RESEARCH_SYSTEM_PROMPT),
-            Message(role="user", content="Begin the research session. Start with research_get_queue."),
-        ]
-
-        response = await provider.chat(messages, ctx.schemas, model=self._model_name)
-
-        if response.tool_calls:
-            response, _tool_msgs = await execute_tool_loop(
-                provider=provider,
-                messages=messages,
-                tools=ctx.tools,
-                model=self._model_name,
-                initial_response=response,
-                max_calls=self._max_tool_calls,
-                max_rounds=self._max_tool_rounds,
-                on_tool_start=self._track_research_tool,
-            )
-
-        return response, messages, ctx, provider
-
-    async def _track_research_tool(self, tool_name: str) -> None:
-        """Track which tools the research agent called during this session."""
-        self._research_tools_called.add(tool_name)
-
-    async def _recover_research_session(self, messages, response, ctx, provider):
-        """
-        Handle incomplete research sessions via re-prompt + second tool loop.
-
-        Case A: agent stored findings but forgot ``research_complete_topic``.
-            → Re-prompt just to complete; findings are already saved.
-        Case B: agent stored nothing AND never completed — complete dead session.
-            → Re-prompt to store findings first, then complete.
-        """
-        from lib.ai_providers import Message
-        from lib.services.tool_executor import execute_tool_loop
-
-        tools_called = self._research_tools_called
-        stored_findings = "research_store_finding" in tools_called
-        completed_topic = "research_complete_topic" in tools_called
-
-        if not completed_topic:
-            if stored_findings:
-                logging.warning(
-                    "[curiosity] Research Agent stored findings but never called "
-                    "research_complete_topic — re-prompting to complete the topic."
-                )
-                recovery_nudge = (
-                    "⚠️ You stored findings but never called research_complete_topic. "
-                    "Please call research_complete_topic now with a brief summary of what you learned. "
-                    "If multiple topics are still in_progress, complete each one."
-                )
-            else:
-                logging.warning(
-                    "[curiosity] Research Agent finished WITHOUT calling research_store_finding "
-                    "or research_complete_topic — re-prompting once to recover findings."
-                )
-                recovery_nudge = (
-                    "⚠️ You have not stored any findings and have not completed any topics. "
-                    "Your research will be LOST. Please call research_store_finding for each "
-                    "key fact you learned, then call research_complete_topic. "
-                    "If there was nothing to learn, call research_fail_topic with a reason."
-                )
-
-            recovery_messages = messages + [
-                Message(role="assistant", content=response.content or ""),
-                Message(role="user", content=recovery_nudge),
-            ]
-            response = await provider.chat(recovery_messages, ctx.schemas, model=self._model_name)
-            if response.tool_calls:
-                response, _ = await execute_tool_loop(
-                    provider=provider,
-                    messages=recovery_messages,
-                    tools=ctx.tools,
-                    model=self._model_name,
-                    initial_response=response,
-                    max_calls=10,
-                    max_rounds=self._max_tool_rounds,
-                )
-
-        return response
-
-    async def _reset_stale_in_progress_topics(self) -> None:
-        """
-        Reset any ``in_progress`` research topics back to ``pending`` for retry.
-
-        Called from ``_run_research()``'s ``finally`` block.  If the AI claimed a
-        topic (research_start_topic → in_progress) but ran out of context or tool
-        calls before calling research_complete_topic, the topic must go back to
-        ``pending`` so the next curiosity session can pick it up.  Previously it was
-        reset to ``failed``, which was a permanent dead-end since only ``pending``
-        topics are re-queued.
-        """
-        try:
-            async with aiosqlite.connect(self._db_path) as db:
-                async with db.execute(
-                    "SELECT count(*) FROM research_queue WHERE status = 'in_progress'"
-                ) as cur:
-                    row = await cur.fetchone()
-                count = row[0] if row else 0
-                if count > 0:
-                    await db.execute(
-                        "UPDATE research_queue SET status = 'pending' "
-                        "WHERE status = 'in_progress'"
-                    )
-                    await db.commit()
-                    logging.warning(
-                        f"[curiosity] {count} in_progress topic(s) were reset to 'pending' "
-                        "— research session ended without calling research_complete_topic(); "
-                        "will retry next session"
-                    )
-        except Exception as e:
-            logging.warning(f"[curiosity] Could not reset stale in_progress topics: {e}")
+        """Orchestrate Research phase — delegated to curiosity_research module."""
+        await run_research(self)
 
     # ------------------------------------------------------------------
     # Internal — queue introspection for topic deduplication
@@ -624,24 +260,24 @@ class CuriosityModule(HeartbeatModule):
         """
         result: dict[str, list[dict]] = {"completed": [], "in_progress": []}
         try:
-            async with aiosqlite.connect(self._db_path) as db:
-                db.row_factory = aiosqlite.Row
-                async with db.execute(
-                    "SELECT topic, description, status, created_at "
-                    "FROM research_queue "
-                    "WHERE status = 'done' "
-                    "ORDER BY created_at DESC LIMIT 3"
-                ) as cur:
-                    rows = await cur.fetchall()
-                    result["completed"] = [dict(r) for r in rows]
+            db = await self._ensure_conn()
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT topic, description, status, created_at "
+                "FROM research_queue "
+                "WHERE status = 'done' "
+                "ORDER BY created_at DESC LIMIT 3"
+            ) as cur:
+                rows = await cur.fetchall()
+                result["completed"] = [dict(r) for r in rows]
 
-                async with db.execute(
-                    "SELECT topic, description, status, created_at "
-                    "FROM research_queue "
-                    "WHERE status = 'in_progress'"
-                ) as cur:
-                    rows = await cur.fetchall()
-                    result["in_progress"] = [dict(r) for r in rows]
+            async with db.execute(
+                "SELECT topic, description, status, created_at "
+                "FROM research_queue "
+                "WHERE status = 'in_progress'"
+            ) as cur:
+                rows = await cur.fetchall()
+                result["in_progress"] = [dict(r) for r in rows]
         except Exception as e:
             logging.warning(f"[curiosity] Failed to fetch recent queue topics: {e}")
         return result
@@ -680,68 +316,31 @@ class CuriosityModule(HeartbeatModule):
         return results[:limit]
 
     # ------------------------------------------------------------------
-    # Internal — parsing
-    # ------------------------------------------------------------------
-
-    def _parse_discovery_output(self, raw: str) -> list[dict]:
-        """Parse the AI's JSON output from the discovery phase."""
-        # Strip markdown code fences if present
-        text = raw.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-
-        try:
-            data = json.loads(text)
-            topics = data.get("topics", [])
-            if not isinstance(topics, list):
-                return []
-            return [
-                t for t in topics
-                if isinstance(t, dict) and t.get("topic", "").strip()
-            ]
-        except (json.JSONDecodeError, AttributeError) as e:
-            logging.warning(f"[curiosity] Failed to parse discovery output: {e}. Raw: {raw[:200]}")
-            return []
-
-    # ------------------------------------------------------------------
     # Internal — SQLite state (daily counter + queue)
     # ------------------------------------------------------------------
 
     async def _init_db(self) -> None:
         """Create curiosity_state and research_queue tables if they don't exist."""
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS curiosity_state (
-                    key   TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            """)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS research_queue (
-                    id          TEXT PRIMARY KEY,
-                    topic       TEXT NOT NULL,
-                    description TEXT DEFAULT '',
-                    source      TEXT DEFAULT 'conversation',
-                    status      TEXT DEFAULT 'pending',
-                    priority    INTEGER DEFAULT 5,
-                    created_at  INTEGER NOT NULL,
-                    result      TEXT,
-                    retry_count INTEGER DEFAULT 0,
-                    next_retry_at INTEGER
-                )
-            """)
-            # Migrate existing tables that don't have the retry columns yet
-            for col, col_type in [("retry_count", "INTEGER DEFAULT 0"), ("next_retry_at", "INTEGER")]:
-                try:
-                    await db.execute(f"ALTER TABLE research_queue ADD COLUMN {col} {col_type}")
-                except Exception:
-                    pass  # Column already exists — SQLite doesn't support IF NOT EXISTS for ALTER
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS curiosity_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        await db.execute(_CREATE_TABLE)
+        # Migrate existing tables that don't have the retry columns yet
+        for col, col_type in [("retry_count", "INTEGER DEFAULT 0"), ("next_retry_at", "INTEGER")]:
+            try:
+                await db.execute(f"ALTER TABLE research_queue ADD COLUMN {col} {col_type}")
+            except aiosqlite.OperationalError:
+                pass  # Column already exists — SQLite doesn't support IF NOT EXISTS for ALTER
+        await db.commit()
 
         # Restore idle timer from state
         stored = await self._state.get("last_message_at", default=0.0)
         self._last_message_at = stored if stored > 0 else time.time()
+        self._db_initialised = True
 
     async def _promote_retry_topics(self) -> None:
         """Move eligible ``failed_retry`` topics back to ``pending``.
@@ -752,65 +351,65 @@ class CuriosityModule(HeartbeatModule):
         """
         now = int(time.time())
         try:
-            async with aiosqlite.connect(self._db_path) as db:
-                # Permanently fail topics that exceeded max retries
-                await db.execute(
-                    "UPDATE research_queue SET status = 'failed' "
-                    "WHERE status = 'failed_retry' AND retry_count >= ?",
-                    (self._retry_max_attempts,),
-                )
-                # Promote expired retry topics back to pending
-                await db.execute(
-                    "UPDATE research_queue SET status = 'pending' "
-                    "WHERE status = 'failed_retry' "
-                    "AND next_retry_at IS NOT NULL AND next_retry_at <= ?",
-                    (now,),
-                )
-                await db.commit()
+            db = await self._ensure_conn()
+            # Permanently fail topics that exceeded max retries
+            await db.execute(
+                "UPDATE research_queue SET status = 'failed' "
+                "WHERE status = 'failed_retry' AND retry_count >= ?",
+                (self._retry_max_attempts,),
+            )
+            # Promote expired retry topics back to pending
+            await db.execute(
+                "UPDATE research_queue SET status = 'pending' "
+                "WHERE status = 'failed_retry' "
+                "AND next_retry_at IS NOT NULL AND next_retry_at <= ?",
+                (now,),
+            )
+            await db.commit()
         except Exception as e:
             logging.warning(f"[curiosity] Failed to promote retry topics: {e}")
 
     async def _pending_count(self) -> int:
         """Count pending items in research_queue (includes ready retry topics)."""
         try:
-            async with aiosqlite.connect(self._db_path) as db:
-                async with db.execute(
-                    "SELECT count(*) FROM research_queue WHERE status = 'pending'"
-                ) as cur:
-                    row = await cur.fetchone()
+            db = await self._ensure_conn()
+            async with db.execute(
+                "SELECT count(*) FROM research_queue WHERE status = 'pending'"
+            ) as cur:
+                row = await cur.fetchone()
             return row[0] if row else 0
-        except Exception:
+        except aiosqlite.OperationalError:
             return 0
 
     async def _sessions_today(self) -> int:
         """Return how many curiosity sessions ran today (resets at midnight)."""
         today = str(date.today())
         try:
-            async with aiosqlite.connect(self._db_path) as db:
-                async with db.execute(
-                    "SELECT value FROM curiosity_state WHERE key = 'session_date'"
-                ) as cur:
-                    row = await cur.fetchone()
-                stored_date_str = row[0] if row else ""
+            db = await self._ensure_conn()
+            async with db.execute(
+                "SELECT value FROM curiosity_state WHERE key = 'session_date'"
+            ) as cur:
+                row = await cur.fetchone()
+            stored_date_str = row[0] if row else ""
 
-                if stored_date_str != today:
-                    # New day — reset counter
-                    await db.execute(
-                        "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('session_date', ?)",
-                        (today,),
-                    )
-                    await db.execute(
-                        "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('sessions_today', '0')"
-                    )
-                    await db.commit()
-                    return 0
+            if stored_date_str != today:
+                # New day — reset counter
+                await db.execute(
+                    "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('session_date', ?)",
+                    (today,),
+                )
+                await db.execute(
+                    "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('sessions_today', '0')"
+                )
+                await db.commit()
+                return 0
 
-                async with db.execute(
-                    "SELECT value FROM curiosity_state WHERE key = 'sessions_today'"
-                ) as cur:
-                    row = await cur.fetchone()
-                return int(row[0]) if row else 0
-        except Exception:
+            async with db.execute(
+                "SELECT value FROM curiosity_state WHERE key = 'sessions_today'"
+            ) as cur:
+                row = await cur.fetchone()
+            return int(row[0]) if row else 0
+        except aiosqlite.OperationalError:
             return 0
 
     async def _increment_sessions_today(self) -> None:
@@ -821,31 +420,31 @@ class CuriosityModule(HeartbeatModule):
         call can read a stale counter value.
         """
         today = str(date.today())
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute("BEGIN IMMEDIATE")
+        db = await self._ensure_conn()
+        await db.execute("BEGIN IMMEDIATE")
+        async with db.execute(
+            "SELECT value FROM curiosity_state WHERE key = 'session_date'"
+        ) as cur:
+            row = await cur.fetchone()
+        stored_date = row[0] if row else ""
+
+        if stored_date != today:
+            # New day — reset counter to 1
+            await db.execute(
+                "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('session_date', ?)",
+                (today,),
+            )
+            await db.execute(
+                "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('sessions_today', '1')"
+            )
+        else:
             async with db.execute(
-                "SELECT value FROM curiosity_state WHERE key = 'session_date'"
+                "SELECT value FROM curiosity_state WHERE key = 'sessions_today'"
             ) as cur:
                 row = await cur.fetchone()
-            stored_date = row[0] if row else ""
-
-            if stored_date != today:
-                # New day — reset counter to 1
-                await db.execute(
-                    "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('session_date', ?)",
-                    (today,),
-                )
-                await db.execute(
-                    "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('sessions_today', '1')"
-                )
-            else:
-                async with db.execute(
-                    "SELECT value FROM curiosity_state WHERE key = 'sessions_today'"
-                ) as cur:
-                    row = await cur.fetchone()
-                current = int(row[0]) if row else 0
-                await db.execute(
-                    "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('sessions_today', ?)",
-                    (str(current + 1),),
-                )
-            await db.commit()
+            current = int(row[0]) if row else 0
+            await db.execute(
+                "INSERT OR REPLACE INTO curiosity_state (key, value) VALUES ('sessions_today', ?)",
+                (str(current + 1),),
+            )
+        await db.commit()

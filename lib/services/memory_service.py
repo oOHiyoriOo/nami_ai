@@ -138,6 +138,7 @@ class MemoryService:
     def add_to_working_memory(self, content: str, memory_type: str, user_id: str, importance: float = 0.5):
         """
         Add memory to working memory (current conversation context).
+        This feature has been removed (YAGNI). Use the Neo4j long-term store directly.
 
         Args:
             content: Memory content
@@ -145,14 +146,11 @@ class MemoryService:
             user_id: User identifier
             importance: Importance score (0-1)
         """
-        if self.hierarchy:
-            self.hierarchy.add_to_working_memory(content, memory_type, user_id, importance)
-            logging.debug(f"Added to working memory: {memory_type}")
+        logging.debug(f"add_to_working_memory is a no-op (feature removed)")
 
     def clear_working_memory(self):
-        """Clear working memory (e.g., at end of conversation)."""
-        if self.hierarchy:
-            self.hierarchy.clear_working_memory()
+        """Clear working memory — no-op (feature removed)."""
+        logging.debug("clear_working_memory is a no-op (feature removed)")
 
     async def get_stats(self, user_id: str | None = None) -> dict:
         """

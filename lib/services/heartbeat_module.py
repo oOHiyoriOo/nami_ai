@@ -10,6 +10,8 @@ import logging
 import time
 from abc import ABC, abstractmethod
 
+import aiosqlite
+
 
 class HeartbeatModule(ABC):
     """Abstract base for a HeartbeatService pluggable check module."""
@@ -21,6 +23,8 @@ class HeartbeatModule(ABC):
 
     def __init__(self) -> None:
         self._last_run_at: float = 0.0
+        self._db_path: str | None = None
+        self._conn: aiosqlite.Connection | None = None
         # Gate-block tracking for rate-limited INFO/WARNING logging.
         # Keys are gate IDs (e.g. "1.5", "3").  Updated by
         # _report_gate_block() and _clear_gate_block().
@@ -71,6 +75,12 @@ class HeartbeatModule(ABC):
         """Mark a gate as no longer blocking (call when the gate passes)."""
         self._gate_blocked_since.pop(gate, None)
         self._gate_last_logged.pop(gate, None)
+
+    async def _ensure_conn(self) -> aiosqlite.Connection:
+        """Return the persistent connection, opening it lazily if needed."""
+        if self._conn is None:
+            self._conn = await aiosqlite.connect(self._db_path)
+        return self._conn
 
     @abstractmethod
     async def condition(self) -> bool:
@@ -124,3 +134,9 @@ class HeartbeatModule(ABC):
     def __lt__(self, other: "HeartbeatModule") -> bool:
         # Higher priority sorts first
         return self.priority > other.priority
+
+    async def start(self) -> None:
+        """Called when the heartbeat service starts. Override for resource setup."""
+
+    async def stop(self) -> None:
+        """Called when the heartbeat service stops. Override for resource cleanup."""

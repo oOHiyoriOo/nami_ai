@@ -15,6 +15,7 @@ import aiosqlite
 
 from lib.global_registry import g_data
 from lib.services.heartbeat_module import HeartbeatModule
+from lib.utils import resolve_provider_model
 from lib.utils.ai_lock import acquire_ai_lock
 from lib.utils.sqlite_kv import SqliteKVStore
 
@@ -43,18 +44,32 @@ class DreamModule(HeartbeatModule):
     ) -> None:
         super().__init__()
         self.config = config
-        self.db_path = db_path
-        self._state = SqliteKVStore(self.db_path, "dream_state")
+        self._db_path = db_path
+        self._state = SqliteKVStore(self._db_path, "dream_state")
         mem_cfg = config.data.get("memory", {})
         self._dream_cfg = config.data.get("dream", {})
         self._min_idle_hours: float = self._dream_cfg.get("min_idle_hours", 2.0)
         self._min_new_memories: int = self._dream_cfg.get("min_new_memories", 5)
         self._max_tool_calls: int = self._dream_cfg.get("max_tool_calls", 5)
         self._max_tool_rounds: int = self._dream_cfg.get("max_tool_rounds", 10)
-        self._dream_provider: str | None = self._dream_cfg.get("provider")
-        self._dream_model: str | None = self._dream_cfg.get("model")
-        self._fallback_provider: str = mem_cfg.get("extraction_provider", "ollama")
-        self._fallback_model: str = mem_cfg.get("extraction_model", "llama3.2")
+        # Parse dream-specific model — supports "provider/model" prefix format.
+        # If no model key is set at all, both are None so the fallback chain below takes over.
+        dream_model_raw = self._dream_cfg.get("model")
+        if dream_model_raw:
+            self._dream_provider, self._dream_model = resolve_provider_model(
+                dream_model_raw,
+                fallback_provider=self._dream_cfg.get("provider", "ollama"),
+                fallback_model="",
+            )
+        else:
+            self._dream_provider = self._dream_cfg.get("provider")
+            self._dream_model = None
+        # Fallback: extraction settings (also support "provider/model" prefix).
+        self._fallback_provider, self._fallback_model = resolve_provider_model(
+            mem_cfg.get("extraction_model"),
+            fallback_provider=mem_cfg.get("extraction_provider", "ollama"),
+            fallback_model="llama3.2",
+        )
         # Dreams only during nighttime (hour >= night_start OR hour < night_end).
         # Defaults: 20:00–06:00 — mirrors curiosity's daytime window.
         self._night_start_hour: int = self._dream_cfg.get("night_start_hour", 20)
@@ -81,6 +96,25 @@ class DreamModule(HeartbeatModule):
         return hour >= self._night_start_hour or hour < self._night_end_hour
 
     # ------------------------------------------------------------------
+    # Lifecycle — connection management
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Open the persistent DB connection and initialize schema."""
+        self._conn = await aiosqlite.connect(self._db_path)
+        self._state._conn = self._conn
+        await self._init_db()
+        self._db_initialised = True
+        logging.info("[dream] DreamModule started (db=%s)", self._db_path)
+
+    async def stop(self) -> None:
+        """Close the DB connection."""
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+        logging.info("[dream] DreamModule stopped")
+
+    # ------------------------------------------------------------------
     # HeartbeatModule interface
     # ------------------------------------------------------------------
 
@@ -98,10 +132,6 @@ class DreamModule(HeartbeatModule):
         Mutual exclusion with chat and research is handled by acquiring
         g_data['ai_lock'] in action() — no explicit cross-module checks needed.
         """
-        if not self._db_initialised:
-            await self._init_db()
-            self._db_initialised = True
-
         # Gate 1: dream enabled in config?
         if not self._dream_cfg.get("enabled", True):
             return False
@@ -134,12 +164,11 @@ class DreamModule(HeartbeatModule):
                 return False
         # Also check the DB in case the in-memory reference is stale
         try:
-            import aiosqlite
-            async with aiosqlite.connect(self.db_path) as db:
-                async with db.execute(
-                    "SELECT count(*) FROM research_queue WHERE status = 'in_progress'"
-                ) as cur:
-                    row = await cur.fetchone()
+            db = await self._ensure_conn()
+            async with db.execute(
+                "SELECT count(*) FROM research_queue WHERE status = 'in_progress'"
+            ) as cur:
+                row = await cur.fetchone()
             if row and row[0] > 0:
                 logging.debug(
                     f"[dream] {row[0]} research topic(s) in_progress — deferring dream"
@@ -149,7 +178,7 @@ class DreamModule(HeartbeatModule):
                     f"{row[0]} research_queue topic(s) still in_progress",
                 )
                 return False
-        except Exception:
+        except aiosqlite.OperationalError:
             pass  # research_queue may not exist yet — that's fine, don't block dream
 
         self._clear_gate_block("1.8")
@@ -236,14 +265,14 @@ class DreamModule(HeartbeatModule):
 
     async def _init_db(self) -> None:
         """Create the dream_state table if it doesn't exist."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS dream_state (
-                    key   TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            """)
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS dream_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        await db.commit()
         stored = await self._state.get("last_message_at", default=0.0)
         self._last_message_at = stored if stored > 0 else time.time()
 
@@ -367,6 +396,7 @@ class DreamModule(HeartbeatModule):
                     initial_response=response,
                     max_calls=self._max_tool_calls,
                     max_rounds=self._max_tool_rounds,
+                    use_inline_placeholders=True,
                 )
 
             elapsed = time.time() - start

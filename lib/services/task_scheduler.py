@@ -56,6 +56,18 @@ def _is_cron(s: str) -> bool:
 
 
 @dataclass
+class TaskCreateOptions:
+    """Optional parameters for TaskScheduler.create_task()."""
+    adapter: str = "none"
+    label: Optional[str] = None
+    recurrence: Optional[str] = None
+    recurrence_interval: Optional[int] = None
+    context_messages: int = 10
+    origin: str = "user"
+    ttl_runs: Optional[int] = None
+
+
+@dataclass
 class ScheduledTask:
     """In-memory representation of a scheduled task row."""
     id: str
@@ -124,6 +136,7 @@ class TaskScheduler:
     def __init__(self, db_path: str = "scheduler.db", event_bus: Any = None):
         self._db_path = db_path
         self._event_bus = event_bus
+        self._conn: Optional[aiosqlite.Connection] = None
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
@@ -131,25 +144,31 @@ class TaskScheduler:
     # Lifecycle
     # ──────────────────────────────────────────────────────────────────────
 
+    async def _ensure_conn(self) -> aiosqlite.Connection:
+        """Return the persistent connection, opening it lazily if needed."""
+        if self._conn is None:
+            self._conn = await aiosqlite.connect(self._db_path)
+        return self._conn
+
     async def start(self) -> None:
         """Open DB, ensure schema, run migrations, check missed tasks, then start poll loop."""
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(_CREATE_TABLE)
-            await db.commit()
-            # Run all column migrations (idempotent — skip if column exists)
-            for migration in (
-                _MIGRATE_LAST_FIRED_AT,
-                _MIGRATE_ORIGIN,
-                _MIGRATE_TTL_RUNS,
-            ):
-                try:
-                    await db.execute(migration)
-                    await db.commit()
-                except aiosqlite.OperationalError as e:
-                    if "duplicate column" in str(e).lower():
-                        pass  # Column already exists
-                    else:
-                        raise
+        self._conn = await aiosqlite.connect(self._db_path)
+        await self._conn.execute(_CREATE_TABLE)
+        await self._conn.commit()
+        # Run all column migrations (idempotent — skip if column exists)
+        for migration in (
+            _MIGRATE_LAST_FIRED_AT,
+            _MIGRATE_ORIGIN,
+            _MIGRATE_TTL_RUNS,
+        ):
+            try:
+                await self._conn.execute(migration)
+                await self._conn.commit()
+            except aiosqlite.OperationalError as e:
+                if "duplicate column" in str(e).lower():
+                    pass  # Column already exists
+                else:
+                    raise
 
         # Handle missed tasks BEFORE starting the poll loop to avoid a race
         # where _fire_overdue() picks up the same tasks as the missed-task check.
@@ -171,6 +190,8 @@ class TaskScheduler:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self._conn:
+            await self._conn.close()
         logging.info("TaskScheduler stopped")
 
     # ──────────────────────────────────────────────────────────────────────
@@ -183,29 +204,18 @@ class TaskScheduler:
         scheduled_at: int,
         user_id: str,
         conversation_id: str,
-        adapter: str = "none",
-        label: Optional[str] = None,
-        recurrence: Optional[str] = None,
-        recurrence_interval: Optional[int] = None,
-        context_messages: int = 10,
-        origin: str = "user",
-        ttl_runs: Optional[int] = None,
+        options: TaskCreateOptions | None = None,
     ) -> ScheduledTask:
         """
         Persist a new scheduled task.
 
         Args:
-            prompt:              What the AI should do when the task fires.
-            scheduled_at:        Unix timestamp (UTC) when to run.
-            user_id:             Scoped user ID (e.g. 'discord:12345').
-            conversation_id:     Channel / group ID for delivery.
-            adapter:             'discord' | 'whatsapp' | 'none'.
-            label:               Optional short name for listing / cancelling.
-            recurrence:          'daily' | 'hourly' | 'every_n_hours' | 'every_n_days' | None.
-            recurrence_interval: N for interval-based recurrences.
-            context_messages:    History rows to fetch at fire time (default 10).
-            origin:              'user' (default) or 'ai' for self-scheduled tasks.
-            ttl_runs:            Max runs before auto-expiry (for origin='ai').
+            prompt:           What the AI should do when the task fires.
+            scheduled_at:     Unix timestamp (UTC) when to run.
+            user_id:          Scoped user ID (e.g. 'discord:12345').
+            conversation_id:  Channel / group ID for delivery.
+            options:          TaskCreateOptions with optional parameters
+                              (adapter, label, recurrence, etc.).
 
         Returns:
             The created ScheduledTask.
@@ -213,62 +223,67 @@ class TaskScheduler:
         Raises:
             ValueError: If limits are exceeded (MAX_PENDING_PER_USER or MAX_SELF_TASKS).
         """
-        async with aiosqlite.connect(self._db_path) as db:
-            # Enforce per-user limit
+        if options is None:
+            options = TaskCreateOptions()
+
+        db = await self._ensure_conn()
+        # Enforce per-user limit
+        async with db.execute(
+            "SELECT COUNT(*) FROM scheduled_tasks WHERE user_id = ? AND status = 'pending'",
+            (user_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if row and row[0] >= MAX_PENDING_PER_USER:
+                raise ValueError(
+                    f"You already have {MAX_PENDING_PER_USER} pending tasks — "
+                    "cancel some before scheduling more."
+                )
+
+        # Enforce AI self-task limit
+        if options.origin == "ai":
             async with db.execute(
-                "SELECT COUNT(*) FROM scheduled_tasks WHERE user_id = ? AND status = 'pending'",
-                (user_id,),
+                "SELECT COUNT(*) FROM scheduled_tasks WHERE origin = 'ai' AND status = 'pending'",
             ) as cur:
                 row = await cur.fetchone()
-                if row and row[0] >= MAX_PENDING_PER_USER:
+                if row and row[0] >= MAX_SELF_TASKS:
                     raise ValueError(
-                        f"You already have {MAX_PENDING_PER_USER} pending tasks — "
+                        f"Maximum {MAX_SELF_TASKS} AI self-scheduled tasks reached — "
                         "cancel some before scheduling more."
                     )
 
-            # Enforce AI self-task limit
-            if origin == "ai":
-                async with db.execute(
-                    "SELECT COUNT(*) FROM scheduled_tasks WHERE origin = 'ai' AND status = 'pending'",
-                ) as cur:
-                    row = await cur.fetchone()
-                    if row and row[0] >= MAX_SELF_TASKS:
-                        raise ValueError(
-                            f"Maximum {MAX_SELF_TASKS} AI self-scheduled tasks reached — "
-                            "cancel some before scheduling more."
-                        )
-
-            task_id = str(uuid.uuid4())
-            now = int(time.time())
-            await db.execute(
-                """INSERT INTO scheduled_tasks
-                   (id, label, prompt, scheduled_at, created_at, user_id,
-                    conversation_id, adapter, status, recurrence,
-                    recurrence_interval, context_messages, origin, ttl_runs)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    task_id, label, prompt, scheduled_at, now,
-                    user_id, conversation_id, adapter, "pending",
-                    recurrence, recurrence_interval, context_messages,
-                    origin, ttl_runs,
-                ),
-            )
-            await db.commit()
+        task_id = str(uuid.uuid4())
+        now = int(time.time())
+        await db.execute(
+            """INSERT INTO scheduled_tasks
+               (id, label, prompt, scheduled_at, created_at, user_id,
+                conversation_id, adapter, status, recurrence,
+                recurrence_interval, context_messages, origin, ttl_runs)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                task_id, options.label, prompt, scheduled_at, now,
+                user_id, conversation_id, options.adapter, "pending",
+                options.recurrence, options.recurrence_interval,
+                options.context_messages, options.origin, options.ttl_runs,
+            ),
+        )
+        await db.commit()
 
         return ScheduledTask(
-            id=task_id, label=label, prompt=prompt,
+            id=task_id, label=options.label, prompt=prompt,
             scheduled_at=scheduled_at, created_at=now,
             user_id=user_id, conversation_id=conversation_id,
-            adapter=adapter, status="pending", recurrence=recurrence,
-            recurrence_interval=recurrence_interval,
-            context_messages=context_messages,
-            origin=origin, ttl_runs=ttl_runs,
+            adapter=options.adapter, status="pending",
+            recurrence=options.recurrence,
+            recurrence_interval=options.recurrence_interval,
+            context_messages=options.context_messages,
+            origin=options.origin, ttl_runs=options.ttl_runs,
         )
 
     async def list_tasks(self, user_id: str) -> list[ScheduledTask]:
         """Return all non-done tasks for a user, ordered by scheduled_at."""
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        db = await self._ensure_conn()
+        db.row_factory = aiosqlite.Row
+        try:
             async with db.execute(
                 """SELECT * FROM scheduled_tasks
                    WHERE user_id = ? AND status NOT IN ('done','failed')
@@ -276,6 +291,8 @@ class TaskScheduler:
                 (user_id,),
             ) as cur:
                 rows = await cur.fetchall()
+        finally:
+            db.row_factory = None
         return [_row_to_task(r) for r in rows]
 
     async def cancel_task(self, task_id: str, user_id: str) -> bool:
@@ -285,14 +302,14 @@ class TaskScheduler:
         Returns:
             True if cancelled, False if not found / already running.
         """
-        async with aiosqlite.connect(self._db_path) as db:
-            cur = await db.execute(
-                """UPDATE scheduled_tasks SET status = 'failed', result = 'cancelled by user'
-                   WHERE id = ? AND user_id = ? AND status = 'pending'""",
-                (task_id, user_id),
-            )
-            await db.commit()
-            return cur.rowcount > 0
+        db = await self._ensure_conn()
+        cur = await db.execute(
+            """UPDATE scheduled_tasks SET status = 'failed', result = 'cancelled by user'
+               WHERE id = ? AND user_id = ? AND status = 'pending'""",
+            (task_id, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
     # ──────────────────────────────────────────────────────────────────────
     # Internal polling — publishes task.due, subscribes to task.completed
@@ -310,13 +327,16 @@ class TaskScheduler:
     async def _fire_overdue(self) -> None:
         """Find overdue tasks and publish task.due for each."""
         now = int(time.time())
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        db = await self._ensure_conn()
+        db.row_factory = aiosqlite.Row
+        try:
             async with db.execute(
                 "SELECT * FROM scheduled_tasks WHERE status = 'pending' AND scheduled_at <= ?",
                 (now,),
             ) as cur:
                 rows = await cur.fetchall()
+        finally:
+            db.row_factory = None
 
         for row in rows:
             task = _row_to_task(row)
@@ -395,14 +415,14 @@ class TaskScheduler:
         if next_at is None:
             return
 
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                """UPDATE scheduled_tasks
-                   SET status = 'pending', scheduled_at = ?, result = NULL
-                   WHERE id = ?""",
-                (next_at, task.id),
-            )
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute(
+            """UPDATE scheduled_tasks
+               SET status = 'pending', scheduled_at = ?, result = NULL
+               WHERE id = ?""",
+            (next_at, task.id),
+        )
+        await db.commit()
         logging.info(
             f"TaskScheduler: rescheduled {task.id!r} to {next_at} "
             f"(recurrence={task.recurrence})"
@@ -410,17 +430,20 @@ class TaskScheduler:
 
     async def _reschedule_by_id(self, task_id: str, recurrence: str) -> None:
         """Reschedule a task by ID and recurrence (for event-driven reschedule)."""
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        db = await self._ensure_conn()
+        db.row_factory = aiosqlite.Row
+        try:
             async with db.execute(
                 "SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,)
             ) as cur:
                 row = await cur.fetchone()
-            if not row:
-                logging.warning(
-                    f"TaskScheduler: cannot reschedule — task {task_id!r} not found"
-                )
-                return
+        finally:
+            db.row_factory = None
+        if not row:
+            logging.warning(
+                f"TaskScheduler: cannot reschedule — task {task_id!r} not found"
+            )
+            return
 
         task = _row_to_task(row)
         await self._reschedule(task)
@@ -432,24 +455,24 @@ class TaskScheduler:
         result: Optional[str] = None,
         last_fired_at: Optional[int] = None,
     ) -> None:
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                """UPDATE scheduled_tasks
-                   SET status = ?, result = ?,
-                       last_fired_at = COALESCE(?, last_fired_at)
-                   WHERE id = ?""",
-                (status, result, last_fired_at, task_id),
-            )
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute(
+            """UPDATE scheduled_tasks
+               SET status = ?, result = ?,
+                   last_fired_at = COALESCE(?, last_fired_at)
+               WHERE id = ?""",
+            (status, result, last_fired_at, task_id),
+        )
+        await db.commit()
 
     async def _decrement_ttl(self, task_id: str, new_ttl: int) -> None:
         """Decrement the ttl_runs counter for a self-scheduled task."""
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                "UPDATE scheduled_tasks SET ttl_runs = ? WHERE id = ?",
-                (new_ttl, task_id),
-            )
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute(
+            "UPDATE scheduled_tasks SET ttl_runs = ? WHERE id = ?",
+            (new_ttl, task_id),
+        )
+        await db.commit()
 
     # ──────────────────────────────────────────────────────────────────────
     # Startup: missed-task detection
@@ -463,13 +486,16 @@ class TaskScheduler:
         Recurring: silently rebase next-fire from now so they don't pile up.
         """
         now = int(time.time())
-        async with aiosqlite.connect(self._db_path) as db:
-            db.row_factory = aiosqlite.Row
+        db = await self._ensure_conn()
+        db.row_factory = aiosqlite.Row
+        try:
             async with db.execute(
                 "SELECT * FROM scheduled_tasks WHERE status = 'pending' AND scheduled_at < ?",
                 (now,),
             ) as cur:
                 rows = await cur.fetchall()
+        finally:
+            db.row_factory = None
 
         if not rows:
             return
@@ -500,12 +526,12 @@ class TaskScheduler:
         next_at = _next_run_from(task, from_ts)
         if next_at is None:
             return
-        async with aiosqlite.connect(self._db_path) as db:
-            await db.execute(
-                "UPDATE scheduled_tasks SET scheduled_at = ? WHERE id = ?",
-                (next_at, task.id),
-            )
-            await db.commit()
+        db = await self._ensure_conn()
+        await db.execute(
+            "UPDATE scheduled_tasks SET scheduled_at = ? WHERE id = ?",
+            (next_at, task.id),
+        )
+        await db.commit()
         logging.info(f"TaskScheduler: rebased recurring task {task.id!r} → {next_at}")
 
     async def _notify_missed(self, tasks: list[ScheduledTask]) -> None:

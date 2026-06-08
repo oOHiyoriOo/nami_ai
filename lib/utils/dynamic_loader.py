@@ -107,7 +107,7 @@ class ToolLoader(DynamicLoader):
             exclude_prefixes: Optional list of filename prefixes to skip
 
         Returns:
-            List of tool definitions (every get_tool() returns list[dict])
+            List of tool definitions (every get_tool() should return list[dict])
         """
         raw_tools = await self.load_all(exclude_prefixes=exclude_prefixes)
         tools = []
@@ -115,10 +115,25 @@ class ToolLoader(DynamicLoader):
             if not callable(tool_fn):
                 continue
             result = tool_fn()
-            tools.extend(self._process_tool(t) for t in result)
+            # Backward-compat guard: some older tools returned a single dict.
+            if isinstance(result, dict):
+                logging.warning(
+                    f"get_tool() returned a bare dict — wrapping in list. "
+                    f"Update the tool to return list[dict]."
+                )
+                result = [result]
+            if not isinstance(result, list):
+                logging.error(
+                    f"get_tool() returned unexpected type {type(result).__name__} — skipping."
+                )
+                continue
+            for t in result:
+                processed = self._process_tool(t)
+                if processed is not None:
+                    tools.append(processed)
         return tools
 
-    def _process_tool(self, tool: dict) -> dict:
+    def _process_tool(self, tool: dict) -> dict | None:
         """
         Process tool definition.
 
@@ -126,9 +141,15 @@ class ToolLoader(DynamicLoader):
             tool: Raw tool definition
 
         Returns:
-            Processed tool definition
+            Processed tool definition, or None if the input is invalid.
         """
-        if not isinstance(tool, dict) or tool.get('type') != 'function':
+        if not isinstance(tool, dict):
+            logging.warning(
+                f"[dynamic_loader] Non-dict item in tool list: "
+                f"{type(tool).__name__} = {repr(tool)[:100]} — skipping."
+            )
+            return None
+        if tool.get('type') != 'function':
             return tool
 
         result = {

@@ -17,8 +17,9 @@ Used by both the REST API (via FastAPI BackgroundTasks) and AdapterManager.
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
+from lib.global_registry import g_data
 from lib.memory_db import MemoryDb
 
 # In-memory cooldown tracker: conversation_id → last extraction timestamp (epoch seconds).
@@ -63,7 +64,7 @@ def _should_extract(
     min_chars = mem_cfg.get("extraction_min_chars", _DEFAULT_MIN_CHARS)
     cooldown_seconds = mem_cfg.get("extraction_cooldown_seconds", _DEFAULT_COOLDOWN_SECONDS)
 
-    now = time.monotonic()
+    now = time.time()
 
     # Tool-call turns always extract; they carry high-signal content.
     if not has_tool_calls:
@@ -97,7 +98,7 @@ async def _store_extracted_memories(
 
     Returns the count of memories that were actually stored.
     """
-    from lib.services.memory_extractor import slugify
+    from lib.utils import slugify
 
     stored = 0
     for memory in extracted:
@@ -204,7 +205,6 @@ async def process_memories(
         timestamp:       Message timestamp; defaults to now.
         has_tool_calls:  If True, always extract regardless of thresholds (tool turns = high signal).
     """
-    from lib.global_registry import g_data
 
     try:
         memory_extractor = g_data.get("memory_extractor")
@@ -218,7 +218,7 @@ async def process_memories(
         if not _should_extract(message_content, conversation_id, has_tool_calls, cfg):
             return
 
-        ts = timestamp or datetime.utcnow()
+        ts = timestamp or datetime.now(tz=timezone.utc)
         extracted = await memory_extractor.extract_memories(
             message_content=message_content,
             user_name=user_name,
